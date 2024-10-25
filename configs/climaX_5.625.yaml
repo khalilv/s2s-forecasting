@@ -71,7 +71,7 @@ model:
   max_epochs: 125000
   warmup_start_lr: 1e-8
   eta_min: 1e-8
-  pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/5.625deg.ckpt"
+  pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/climaX_5.625deg.ckpt"
   img_size: [32, 64]
   patch_size: 2
   embed_dim: 1024
