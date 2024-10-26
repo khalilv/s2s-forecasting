@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from torchmetrics import Metric
 from torchmetrics.utilities.data import dim_zero_cat
-from s2s.utils.data_utils import encode_timestamp, decode_timestamp
+from s2s.utils.data_utils import encode_timestamp, decode_timestamp, remove_year
 
 class mse(Metric):
     def __init__(self, vars, transforms=None, suffix=None, **kwargs):
@@ -221,6 +221,7 @@ class lat_weighted_acc(Metric):
         targets = dim_zero_cat(self.targets)
         encoded_timestamps = dim_zero_cat(self.encoded_timestamps)  
         decoded_timestamps = [decode_timestamp(ts.item()) for ts in encoded_timestamps]
+        decoded_timestamps_no_year = [remove_year(ts) for ts in decoded_timestamps]
 
         if self.transforms is not None:
             preds = self.transforms(preds)
@@ -232,7 +233,7 @@ class lat_weighted_acc(Metric):
         w_lat = torch.from_numpy(w_lat).unsqueeze(0).unsqueeze(-1).to(dtype=targets.dtype, device=targets.device)  # (1, H, 1)
 
         clim_timestamp_to_index = {timestamp: idx for idx, timestamp in enumerate(self.clim_timestamps)}
-        clim_subset_indices = [clim_timestamp_to_index[timestamp] for timestamp in decoded_timestamps]
+        clim_subset_indices = [clim_timestamp_to_index[timestamp] for timestamp in decoded_timestamps_no_year]
         clim_subset = self.clim[clim_subset_indices]
         clim_subset = clim_subset.to(device=targets.device)
         preds = preds - clim_subset
@@ -276,6 +277,7 @@ class lat_weighted_acc_spatial_map(Metric):
         targets = dim_zero_cat(self.targets)
         encoded_timestamps = dim_zero_cat(self.encoded_timestamps)  
         decoded_timestamps = [decode_timestamp(ts.item()) for ts in encoded_timestamps]
+        decoded_timestamps_no_year = [remove_year(ts) for ts in decoded_timestamps]
 
         if self.transforms is not None:
             preds = self.transforms(preds)
@@ -287,7 +289,7 @@ class lat_weighted_acc_spatial_map(Metric):
         w_lat = torch.from_numpy(w_lat).unsqueeze(0).unsqueeze(-1).to(dtype=targets.dtype, device=targets.device)  # (1, H, 1)
 
         clim_timestamp_to_index = {timestamp: idx for idx, timestamp in enumerate(self.clim_timestamps)}
-        clim_subset_indices = [clim_timestamp_to_index[timestamp] for timestamp in decoded_timestamps]
+        clim_subset_indices = [clim_timestamp_to_index[timestamp] for timestamp in decoded_timestamps_no_year]
         clim_subset = self.clim[clim_subset_indices]
         clim_subset = clim_subset.to(device=targets.device)
         preds = preds - clim_subset
