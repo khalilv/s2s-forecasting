@@ -64,43 +64,33 @@ def zarr2np_climatology(path, variables, years, save_dir, partition, hrs_per_ste
         **climatology,
     )
 
-def zarr2np(path, variables, years, save_dir, partition, num_shards_per_year, grid_size, hrs_per_step):
+def zarr2np_static(path, static_variables, save_dir):
+    os.makedirs(os.path.join(save_dir, "static"), exist_ok=True)
+    zarr_ds = xr.open_zarr(path)
+    if 'orography' in static_variables:
+        zarr_ds['orography'] = zarr_ds['geopotential_at_surface']/9.80665
+    static_fields = {}
+    normalize_mean = {}
+    normalize_std = {}
+    for s in static_variables:
+        static_field = zarr_ds[s].to_numpy().T
+        static_fields[s] = static_field
+        normalize_mean[s] = static_field.mean(axis=(0,1))
+        normalize_std[s] = static_field.std(axis=(0,1))
+    np.savez(os.path.join(save_dir, "static", "normalize_mean.npz"), **normalize_mean)
+    np.savez(os.path.join(save_dir, "static", "normalize_std.npz"), **normalize_std)
+    np.savez(os.path.join(save_dir, "static", f"static.npz"),**static_fields)
+
+def zarr2np(path, variables, years, save_dir, partition, num_shards_per_year, hrs_per_step):
     os.makedirs(os.path.join(save_dir, partition), exist_ok=True)
     zarr_ds = xr.open_zarr(path)
-    zarr_ds['orography'] = zarr_ds['geopotential_at_surface']/9.80665
 
     if partition == "train":
         normalize_mean = {}
         normalize_std = {}
 
-    constant_fields = ["land_sea_mask", "orography", "lattitude"]
-    constant_values = {}
-    for f in constant_fields:
-        if f == 'lattitude':
-            constant_field = zarr_ds.get('latitude', zarr_ds.get('lattitude')).to_numpy()
-            constant_field = np.tile(constant_field, (grid_size[1], 1))
-        else:
-            constant_field = zarr_ds[f].to_numpy()
-        
-        constant_field = constant_field.T
-                   
-        constant_values[f] = np.expand_dims(constant_field, axis=(0, 1)).repeat(
-            HRS_PER_LEAP_YEAR // hrs_per_step, axis=0
-        )
-        if partition == "train":
-            normalize_mean[f] = constant_field.mean(axis=(0,1))
-            normalize_std[f] = constant_field.std(axis=(0,1))
-
-
     for year in tqdm(years):
         np_vars = {}
-
-        # constant variables
-        for f in constant_fields:
-            if is_leap_year(year):
-                np_vars[f] = constant_values[f]
-            else:
-                np_vars[f] = constant_values[f][:(HRS_PER_LEAP_YEAR-24)//hrs_per_step]
 
         # non-constant fields
         for var in variables:
@@ -170,15 +160,14 @@ def zarr2np(path, variables, years, save_dir, partition, num_shards_per_year, gr
 
     if partition == "train":
         for var in normalize_mean.keys():
-            if var not in constant_fields: #dont need to aggregate for static variables
-                mean = np.stack(normalize_mean[var], axis=0)
-                std = np.stack(normalize_std[var], axis=0)
-                agg_mean = np.sum(mean[:,1] * mean[:,0]) / np.sum(mean[:,1])
-                sum_w_var = np.sum((std[:,1] - 1) * (std[:,0]**2))
-                sum_group_var = np.sum((std[:,1]) * (mean[:,0] - agg_mean)**2)
-                agg_std = np.sqrt((sum_w_var  + sum_group_var)/(np.sum(std[:,1]) - 1))
-                normalize_mean[var] = agg_mean
-                normalize_std[var] = agg_std
+            mean = np.stack(normalize_mean[var], axis=0)
+            std = np.stack(normalize_std[var], axis=0)
+            agg_mean = np.sum(mean[:,1] * mean[:,0]) / np.sum(mean[:,1])
+            sum_w_var = np.sum((std[:,1] - 1) * (std[:,0]**2))
+            sum_group_var = np.sum((std[:,1]) * (mean[:,0] - agg_mean)**2)
+            agg_std = np.sqrt((sum_w_var  + sum_group_var)/(np.sum(std[:,1]) - 1))
+            normalize_mean[var] = agg_mean
+            normalize_std[var] = agg_std
 
         np.savez(os.path.join(save_dir, "normalize_mean.npz"), **normalize_mean)
         np.savez(os.path.join(save_dir, "normalize_std.npz"), **normalize_std)
@@ -196,7 +185,7 @@ def zarr2np(path, variables, years, save_dir, partition, num_shards_per_year, gr
         "2m_temperature",
         "10m_u_component_of_wind",
         "10m_v_component_of_wind",
-        # "toa_incident_solar_radiation",
+        "mean_sea_level_pressure",
         "total_precipitation_6hr",
         "geopotential",
         "u_component_of_wind",
@@ -206,24 +195,35 @@ def zarr2np(path, variables, years, save_dir, partition, num_shards_per_year, gr
         "specific_humidity",
     ],
 )
+@click.option(
+    "--static_variables",
+    "-v",
+    type=click.STRING,
+    multiple=True,
+    default=[
+        "land_sea_mask", 
+        "orography", 
+        "soil_type",
+        "geopotential_at_surface",
+    ],
+)
 @click.option("--start_train_year", type=int, default=1979)
 @click.option("--start_val_year", type=int, default=2016)
 @click.option("--start_test_year", type=int, default=2017)
 @click.option("--end_year", type=int, default=2019)
 @click.option("--num_shards", type=int, default=8)
-@click.option("--grid_size", type=(int, int), default=(32, 64))
 @click.option("--hrs_per_step", type=int, default=1)
 @click.option("--clim_start_year", type=int, default=1990)
 def main(
     root_dir,
     save_dir,
     variables,
+    static_variables,
     start_train_year,
     start_val_year,
     start_test_year,
     end_year,
     num_shards,
-    grid_size,
     hrs_per_step,
     clim_start_year
 ):
@@ -234,9 +234,11 @@ def main(
 
     os.makedirs(save_dir, exist_ok=True)
 
-    zarr2np(root_dir, variables, train_years, save_dir, "train", num_shards, grid_size, hrs_per_step)
-    zarr2np(root_dir, variables, val_years, save_dir, "val", num_shards, grid_size, hrs_per_step)
-    zarr2np(root_dir, variables, test_years, save_dir, "test", num_shards, grid_size, hrs_per_step)
+    zarr2np_static(root_dir, static_variables, save_dir)
+
+    zarr2np(root_dir, variables, train_years, save_dir, "train", num_shards, hrs_per_step)
+    zarr2np(root_dir, variables, val_years, save_dir, "val", num_shards, hrs_per_step)
+    zarr2np(root_dir, variables, test_years, save_dir, "test", num_shards, hrs_per_step)
 
     climatology_val_years = range(clim_start_year, start_val_year)
     climatology_test_years = range(clim_start_year, start_test_year)

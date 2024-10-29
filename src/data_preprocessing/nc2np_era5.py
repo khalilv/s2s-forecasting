@@ -65,6 +65,22 @@ def nc2np_climatology(path, variables, years, save_dir, partition, hrs_per_step)
         **climatology,
     )
 
+def nc2np_static(path, static_variables, save_dir):
+    os.makedirs(os.path.join(save_dir, "static"), exist_ok=True)
+    static_ds = xr.open_mfdataset(os.path.join(path, "constants/constants_5.625deg.nc"), combine="by_coords", parallel=True)
+    static_fields = {}
+    normalize_mean = {}
+    normalize_std = {}
+    for s in static_variables:
+        static_field = static_ds[NAME_TO_VAR[s]].to_numpy()
+        static_fields[s] = static_field
+        normalize_mean[s] = static_field.mean(axis=(0,1))
+        normalize_std[s] = static_field.std(axis=(0,1))
+    np.savez(os.path.join(save_dir, "static", "normalize_mean.npz"), **normalize_mean)
+    np.savez(os.path.join(save_dir, "static", "normalize_std.npz"), **normalize_std)
+    np.savez(os.path.join(save_dir, "static", f"static.npz"),**static_fields)
+
+
 def nc2np(path, variables, years, save_dir, partition, num_shards_per_year, hrs_per_step):
     assert HRS_PER_LEAP_YEAR % hrs_per_step == 0
     os.makedirs(os.path.join(save_dir, partition), exist_ok=True)
@@ -73,29 +89,9 @@ def nc2np(path, variables, years, save_dir, partition, num_shards_per_year, hrs_
         normalize_mean = {}
         normalize_std = {}
 
-    constants = xr.open_mfdataset(os.path.join(path, "constants/constants_5.625deg.nc"), combine="by_coords", parallel=True)
-    constant_fields = ["land_sea_mask", "orography", "lattitude"]
-    constant_values = {}
-    for f in constant_fields:
-        constant_field = constants[NAME_TO_VAR[f]].to_numpy()
-
-        constant_values[f] = np.expand_dims(constant_field, axis=(0, 1)).repeat(
-            HRS_PER_LEAP_YEAR // hrs_per_step, axis=0
-        )
-        if partition == "train":
-            normalize_mean[f] = constant_field.mean(axis=(0,1))
-            normalize_std[f] = constant_field.std(axis=(0,1))
-
     for year in tqdm(years):
         np_vars = {}
    
-        # constant variables
-        for f in constant_fields:
-            if is_leap_year(year):
-                np_vars[f] = constant_values[f]
-            else:
-                np_vars[f] = constant_values[f][:(HRS_PER_LEAP_YEAR-24)//hrs_per_step]
-
         # non-constant fields
         for var in variables:
             ps = glob.glob(os.path.join(path, var, f"*{year}*.nc"))
@@ -165,15 +161,14 @@ def nc2np(path, variables, years, save_dir, partition, num_shards_per_year, hrs_
 
     if partition == "train":
         for var in normalize_mean.keys():
-            if var not in constant_fields: #dont need to aggregate for static variables
-                mean = np.stack(normalize_mean[var], axis=0)
-                std = np.stack(normalize_std[var], axis=0)
-                agg_mean = np.sum(mean[:,1] * mean[:,0]) / np.sum(mean[:,1])
-                sum_w_var = np.sum((std[:,1] - 1) * (std[:,0]**2))
-                sum_group_var = np.sum((std[:,1]) * (mean[:,0] - agg_mean)**2)
-                agg_std = np.sqrt((sum_w_var  + sum_group_var)/(np.sum(std[:,1]) - 1))
-                normalize_mean[var] = agg_mean
-                normalize_std[var] = agg_std
+            mean = np.stack(normalize_mean[var], axis=0)
+            std = np.stack(normalize_std[var], axis=0)
+            agg_mean = np.sum(mean[:,1] * mean[:,0]) / np.sum(mean[:,1])
+            sum_w_var = np.sum((std[:,1] - 1) * (std[:,0]**2))
+            sum_group_var = np.sum((std[:,1]) * (mean[:,0] - agg_mean)**2)
+            agg_std = np.sqrt((sum_w_var  + sum_group_var)/(np.sum(std[:,1]) - 1))
+            normalize_mean[var] = agg_mean
+            normalize_std[var] = agg_std
 
         np.savez(os.path.join(save_dir, "normalize_mean.npz"), **normalize_mean)
         np.savez(os.path.join(save_dir, "normalize_std.npz"), **normalize_std)
@@ -201,6 +196,16 @@ def nc2np(path, variables, years, save_dir, partition, num_shards_per_year, hrs_
         "specific_humidity",
     ],
 )
+@click.option(
+    "--static_variables",
+    "-v",
+    type=click.STRING,
+    multiple=True,
+    default=[
+        "land_sea_mask", 
+        "orography", 
+    ],
+)
 @click.option("--start_train_year", type=int, default=1979)
 @click.option("--start_val_year", type=int, default=2016)
 @click.option("--start_test_year", type=int, default=2017)
@@ -212,6 +217,7 @@ def main(
     root_dir,
     save_dir,
     variables,
+    static_variables,
     start_train_year,
     start_val_year,
     start_test_year,
@@ -226,6 +232,8 @@ def main(
     test_years = range(start_test_year, end_year)
 
     os.makedirs(save_dir, exist_ok=True)
+
+    nc2np_static(root_dir, static_variables, save_dir)
 
     nc2np(root_dir, variables, train_years, save_dir, "train", num_shards, hrs_per_step)
     nc2np(root_dir, variables, val_years, save_dir, "val", num_shards, hrs_per_step)
