@@ -3,7 +3,7 @@
 import dataclasses
 from datetime import datetime
 from functools import partial
-from typing import Callable
+from typing import Callable, Dict, Tuple, Union
 
 import numpy as np
 import torch
@@ -25,8 +25,8 @@ class Metadata:
     Args:
         lat (:class:`torch.Tensor`): Latitudes.
         lon (:class:`torch.Tensor`): Longitudes.
-        time (tuple[datetime, ...]): For every batch element, the time.
-        atmos_levels (tuple[int | float, ...]): Pressure levels for the atmospheric variables in
+        time (Tuple[datetime, ...]): For every batch element, the time.
+        atmos_levels (Tuple[Union[int, float], ...]): Pressure levels for the atmospheric variables in
             hPa.
         rollout_step (int, optional): How many roll-out steps were used to produce this prediction.
             If equal to `0`, which is the default, then this means that this is not a prediction,
@@ -36,8 +36,8 @@ class Metadata:
 
     lat: torch.Tensor
     lon: torch.Tensor
-    time: tuple[datetime, ...]
-    atmos_levels: tuple[int | float, ...]
+    time: Tuple[datetime, ...]
+    atmos_levels: Tuple[Union[int, float], ...]
     rollout_step: int = 0
 
     def __post_init__(self):
@@ -79,21 +79,21 @@ class Batch:
         metadata (:class:`Metadata`): Metadata associated to this batch.
     """
 
-    surf_vars: dict[str, torch.Tensor]
-    static_vars: dict[str, torch.Tensor]
-    atmos_vars: dict[str, torch.Tensor]
+    surf_vars: Dict[str, torch.Tensor]
+    static_vars: Dict[str, torch.Tensor]
+    atmos_vars: Dict[str, torch.Tensor]
     metadata: Metadata
 
     @property
-    def spatial_shape(self) -> tuple[int, int]:
+    def spatial_shape(self) -> Tuple[int, int]:
         """Get the spatial shape from an arbitrary surface-level variable."""
         return next(iter(self.surf_vars.values())).shape[-2:]
 
-    def normalise(self, surf_stats: dict[str, tuple[float, float]]) -> "Batch":
+    def normalise(self, surf_stats: Dict[str, Tuple[float, float]]) -> "Batch":
         """Normalise all variables in the batch.
 
         Args:
-            surf_stats (dict[str, tuple[float, float]]): For these surface-level variables, adjust
+            surf_stats (dict[str, Tuple[float, float]]): For these surface-level variables, adjust
                 the normalisation to the given tuple consisting of a new location and scale.
 
         Returns:
@@ -113,11 +113,11 @@ class Batch:
             metadata=self.metadata,
         )
 
-    def unnormalise(self, surf_stats: dict[str, tuple[float, float]]) -> "Batch":
+    def unnormalise(self, surf_stats: Dict[str, Tuple[float, float]]) -> "Batch":
         """Unnormalise all variables in the batch.
 
         Args:
-            surf_stats (dict[str, tuple[float, float]]): For these surface-level variables, adjust
+            surf_stats (dict[str, Tuple[float, float]]): For these surface-level variables, adjust
                 the normalisation to the given tuple consisting of a new location and scale.
 
         Returns:
@@ -179,7 +179,7 @@ class Batch:
             ),
         )
 
-    def to(self, device: str | torch.device) -> "Batch":
+    def to(self, device: Union[str, torch.device]) -> "Batch":
         """Move the batch to another device."""
         return self._fmap(lambda x: x.to(device))
 

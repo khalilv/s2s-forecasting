@@ -1,6 +1,7 @@
 """Copyright (c) Microsoft Corporation. Licensed under the MIT license."""
 
 from datetime import timedelta
+from typing import Optional, Tuple
 
 import torch
 from einops import rearrange
@@ -30,9 +31,9 @@ class Perceiver3DEncoder(nn.Module):
 
     def __init__(
         self,
-        surf_vars: tuple[str, ...],
-        static_vars: tuple[str, ...] | None,
-        atmos_vars: tuple[str, ...],
+        surf_vars: Tuple[str, ...],
+        static_vars: Optional[Tuple[str, ...]],
+        atmos_vars: Tuple[str, ...],
         patch_size: int = 4,
         latent_levels: int = 8,
         embed_dim: int = 1024,
@@ -47,9 +48,9 @@ class Perceiver3DEncoder(nn.Module):
         """Initialise.
 
         Args:
-            surf_vars (tuple[str, ...]): All supported surface-level variables.
-            static_vars (tuple[str, ...], optional): All supported static variables.
-            atmos_vars (tuple[str, ...]): All supported atmospheric variables.
+            surf_vars (Tuple[str, ...]): All supported surface-level variables.
+            static_vars (Optional[Tuple[str, ...]]): All supported static variables.
+            atmos_vars (Tuple[str, ...]): All supported atmospheric variables.
             patch_size (int, optional): Patch size. Defaults to `4`.
             latent_levels (int): Number of latent pressure levels. Defaults to `8`.
             embed_dim (int, optional): Embedding dim. used in the aggregation blocks. Defaults
@@ -169,14 +170,14 @@ class Perceiver3DEncoder(nn.Module):
         Returns:
             torch.Tensor: Encoding of shape `(B, L, D)`.
         """
-        surf_vars = tuple(batch.surf_vars.keys())
-        static_vars = tuple(batch.static_vars.keys())
-        atmos_vars = tuple(batch.atmos_vars.keys())
+        surf_vars = Tuple(batch.surf_vars.keys())
+        static_vars = Tuple(batch.static_vars.keys())
+        atmos_vars = Tuple(batch.atmos_vars.keys())
         atmos_levels = batch.metadata.atmos_levels
 
-        x_surf = torch.stack(tuple(batch.surf_vars.values()), dim=2)
-        x_static = torch.stack(tuple(batch.static_vars.values()), dim=2)
-        x_atmos = torch.stack(tuple(batch.atmos_vars.values()), dim=2)
+        x_surf = torch.stack(Tuple(batch.surf_vars.values()), dim=2)
+        x_static = torch.stack(Tuple(batch.static_vars.values()), dim=2)
+        x_atmos = torch.stack(Tuple(batch.atmos_vars.values()), dim=2)
 
         B, T, _, C, H, W = x_atmos.size()
         assert x_surf.shape[:2] == (B, T), f"Expected shape {(B, T)}, got {x_surf.shape[:2]}."

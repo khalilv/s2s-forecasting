@@ -1,7 +1,7 @@
 """Copyright (c) Microsoft Corporation. Licensed under the MIT license."""
 
 from functools import partial
-from typing import Optional
+from typing import Dict, Optional, Tuple, Union
 
 import torch
 
@@ -16,7 +16,7 @@ __all__ = [
 def normalise_surf_var(
     x: torch.Tensor,
     name: str,
-    stats: Optional[dict[str, tuple[float, float]]] = None,
+    stats: Optional[Dict[str, Tuple[float, float]]] = None,
     unnormalise: bool = False,
 ) -> torch.Tensor:
     """Normalise a surface-level variable."""
@@ -34,12 +34,12 @@ def normalise_surf_var(
 def normalise_atmos_var(
     x: torch.Tensor,
     name: str,
-    atmos_levels: tuple[int | float, ...],
+    atmos_levels: Tuple[Union[int, float], ...],
     unnormalise: bool = False,
 ) -> torch.Tensor:
     """Normalise an atmospheric variable."""
-    level_locations: list[int | float] = []
-    level_scales: list[int | float] = []
+    level_locations: list[Union[int, float]] = []
+    level_scales: list[Union[int, float]] = []
     for level in atmos_levels:
         level_locations.append(locations[f"{name}_{level}"])
         level_scales.append(scales[f"{name}_{level}"])
@@ -56,7 +56,7 @@ unnormalise_surf_var = partial(normalise_surf_var, unnormalise=True)
 unnormalise_atmos_var = partial(normalise_atmos_var, unnormalise=True)
 
 
-locations: dict[str, float] = {
+locations: Dict[str, float] = {
     "z": -1.386496e03,
     "lsm": 0.000000e00,
     "slt": 0.000000e00,
@@ -131,7 +131,7 @@ locations: dict[str, float] = {
     "q_1000": 7.030342e-03,
 }
 
-scales: dict[str, float] = {
+scales: Dict[str, float] = {
     "z": 5.884467e04,
     "lsm": 1.000000e00,
     "slt": 7.000000e00,

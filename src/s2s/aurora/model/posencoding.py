@@ -8,6 +8,7 @@ Parts of this code are inspired by
 import torch
 import torch.nn.functional as F
 from timm.models.layers.helpers import to_2tuple
+from typing import Tuple, Union
 
 from s2s.aurora.model.fourier import FourierExpansion
 
@@ -61,10 +62,10 @@ def patch_root_area(
 def pos_scale_enc_grid(
     encode_dim: int,
     grid: torch.Tensor,
-    patch_dims: tuple,
+    patch_dims: Tuple,
     pos_expansion: FourierExpansion,
     scale_expansion: FourierExpansion,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Compute the position and scale encoding for a latitude-longitude grid.
 
     Requires batch dimensions in the input and returns a batch dimension.
@@ -74,14 +75,14 @@ def pos_scale_enc_grid(
             across latitudes and longitudes and across sines and cosines.
         grid (torch.Tensor): Latitude-longitude grid of dimensions `(B, 2, H, W)`. `grid[:, 0]`
             should be the latitudes of `grid[:, 1]` should be the longitudes.
-        patch_dims (tuple): Patch dimensions. Different x-values and y-values are supported.
+        patch_dims (Tuple): Patch dimensions. Different x-values and y-values are supported.
         pos_expansion (:class:`aurora.model.fourier.FourierExpansion`): Fourier expansion for the
             latitudes and longitudes.
         scale_expansion (:class:`aurora.model.fourier.FourierExpansion`): Fourier expansion for the
             patch areas.
 
     Returns:
-        tuple[torch.Tensor, torch.Tensor]: Positional encoding and scale encoding of shape
+        Tuple[torch.Tensor, torch.Tensor]: Positional encoding and scale encoding of shape
             `(B, H/patch[0] * W/patch[1], D)`.
     """
     assert encode_dim % 4 == 0
@@ -146,10 +147,10 @@ def pos_scale_enc(
     encode_dim: int,
     lat: torch.Tensor,
     lon: torch.Tensor,
-    patch_dims: int | list | tuple,
+    patch_dims: Union[int, list, Tuple],
     pos_expansion: FourierExpansion,
     scale_expansion: FourierExpansion,
-) -> torch.Tensor:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Positional encoding of latitude-longitude data.
 
     Does not support batch dimensions in the input and does not return batch dimensions either.
@@ -158,7 +159,7 @@ def pos_scale_enc(
         encode_dim (int): Output encoding dimension `D`.
         lat (torch.Tensor): Latitudes, `H`. Can be either a vector or a matrix.
         lon (torch.Tensor): Longitudes, `W`. Can be either a vector or a matrix.
-        patch_dims (Union[list, tuple]): Patch dimensions. Different x-values and y-values are
+        patch_dims (Union[int, list, Tuple]): Patch dimensions. Different x-values and y-values are
             supported.
         pos_expansion (:class:`aurora.model.fourier.FourierExpansion`): Fourier expansion for the
             latitudes and longitudes.
@@ -166,7 +167,7 @@ def pos_scale_enc(
             patch areas.
 
     Returns:
-        tuple[torch.Tensor, torch.Tensor]: Positional encoding and scale encoding of shape
+        Tuple[torch.Tensor, torch.Tensor]: Positional encoding and scale encoding of shape
             `(H/patch[0] * W/patch[1], D)`.
     """
     if lat.dim() == lon.dim() == 1:

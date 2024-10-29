@@ -1,6 +1,7 @@
 """Copyright (c) Microsoft Corporation. Licensed under the MIT license."""
 
 from datetime import timedelta
+from typing import Tuple
 
 import torch
 from einops import rearrange
@@ -23,8 +24,8 @@ class Perceiver3DDecoder(nn.Module):
 
     def __init__(
         self,
-        surf_vars: tuple[str, ...],
-        atmos_vars: tuple[str, ...],
+        surf_vars: Tuple[str, ...],
+        atmos_vars: Tuple[str, ...],
         patch_size: int = 4,
         embed_dim: int = 1024,
         depth: int = 1,
@@ -37,8 +38,8 @@ class Perceiver3DDecoder(nn.Module):
         """Initialise.
 
         Args:
-            surf_vars (tuple[str, ...]): All supported surface-level variables.
-            atmos_vars (tuple[str, ...]): All supported atmospheric variables.
+            surf_vars (Tuple[str, ...]): All supported surface-level variables.
+            atmos_vars (Tuple[str, ...]): All supported atmospheric variables.
             patch_size (int, optional): Patch size. Defaults to `4`.
             embed_dim (int, optional): Embedding dim.. Defaults to `1024`.
             depth (int, optional): Number of Perceiver cross-attention and feed-forward blocks.
@@ -109,7 +110,7 @@ class Perceiver3DDecoder(nn.Module):
         self,
         x: torch.Tensor,
         batch: Batch,
-        patch_res: tuple[int, int, int],
+        patch_res: Tuple[int, int, int],
         lead_time: timedelta,
     ) -> Batch:
         """Forward pass of MultiScaleEncoder.
@@ -117,14 +118,14 @@ class Perceiver3DDecoder(nn.Module):
         Args:
             x (torch.Tensor): Backbone output of shape `(B, L, D)`.
             batch (:class:`aurora.batch.Batch`): Batch to make predictions for.
-            patch_res (tuple[int, int, int]): Patch resolution
+            patch_res (Tuple[int, int, int]): Patch resolution
             lead_time (timedelta): Lead time.
 
         Returns:
             :class:`aurora.batch.Batch`: Prediction for `batch`.
         """
-        surf_vars = tuple(batch.surf_vars.keys())
-        atmos_vars = tuple(batch.atmos_vars.keys())
+        surf_vars = Tuple(batch.surf_vars.keys())
+        atmos_vars = Tuple(batch.atmos_vars.keys())
         atmos_levels = batch.metadata.atmos_levels
 
         # Compress the latent dimension from the U-net skip concatenation.
@@ -173,7 +174,7 @@ class Perceiver3DDecoder(nn.Module):
             Metadata(
                 lat=lat,
                 lon=lon,
-                time=tuple(t + lead_time for t in batch.metadata.time),
+                time=Tuple(t + lead_time for t in batch.metadata.time),
                 atmos_levels=atmos_levels,
                 rollout_step=batch.metadata.rollout_step + 1,
             ),

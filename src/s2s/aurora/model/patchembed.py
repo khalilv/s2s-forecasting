@@ -1,7 +1,7 @@
 """Copyright (c) Microsoft Corporation. Licensed under the MIT license."""
 
 import math
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -17,7 +17,7 @@ class LevelPatchEmbed(nn.Module):
 
     def __init__(
         self,
-        var_names: tuple[str, ...],
+        var_names: Tuple[str, ...],
         patch_size: int,
         embed_dim: int,
         history_size: int = 1,
@@ -27,7 +27,7 @@ class LevelPatchEmbed(nn.Module):
         """Initialise.
 
         Args:
-            var_names (tuple[str, ...]): Variables to embed.
+            var_names (Tuple[str, ...]): Variables to embed.
             patch_size (int): Patch size.
             embed_dim (int): Embedding dimensionality.
             history_size (int, optional): Number of history dimensions. Defaults to `1`.
@@ -76,12 +76,12 @@ class LevelPatchEmbed(nn.Module):
             bound = 1 / math.sqrt(fan_in)
             nn.init.uniform_(self.bias, -bound, bound)
 
-    def forward(self, x: torch.Tensor, var_names: tuple[str, ...]) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, var_names: Tuple[str, ...]) -> torch.Tensor:
         """Run the embedding.
 
         Args:
             x (:class:`torch.Tensor`): Tensor to embed of a shape of `(B, V, T, H, W)`.
-            var_names (tuple[str, ...]): Names of the variables in `x`. The length should be equal
+            var_names (Tuple[str, ...]): Names of the variables in `x`. The length should be equal
                 to `V`.
 
         Returns:

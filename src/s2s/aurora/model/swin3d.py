@@ -9,7 +9,7 @@ Code adapted from
 import itertools
 from datetime import timedelta
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, Union, Tuple, Type
 
 import torch
 import torch.nn as nn
@@ -75,7 +75,7 @@ class WindowAttention(nn.Module):
     def __init__(
         self,
         dim: int,
-        window_size: tuple[int, int, int],
+        window_size: Tuple[int, int, int],
         num_heads: int,
         qkv_bias: bool = True,
         qk_scale: Optional[float] = None,
@@ -92,7 +92,7 @@ class WindowAttention(nn.Module):
 
         Args:
             dim (int): Number of input channels.
-            window_size (tuple[int, int, int]): The size of the windows.
+            window_size (Tuple[int, int, int]): The size of the windows.
             num_heads (int): Number of attention heads.
             qkv_bias (bool, optional): If `True`, add a learnable bias to the query, key, dn value.
                 Defaults to `True`.
@@ -135,7 +135,7 @@ class WindowAttention(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        mask: torch.Tensor | None = None,
+        mask: Optional[torch.Tensor] = None,
         rollout_step: int = 0,
     ) -> torch.Tensor:
         """Run the forward pass of the window-based multi-head self-attention layer.
@@ -172,7 +172,7 @@ class WindowAttention(nn.Module):
         return f"dim={self.dim}, window_size={self.window_size}, num_heads={self.num_heads}"
 
 
-def get_two_sidded_padding(H_padding: int, W_padding: int) -> tuple[int, int, int, int]:
+def get_two_sidded_padding(H_padding: int, W_padding: int) -> Tuple[int, int, int, int]:
     """Returns the padding for the left, right, top, and bottom sides, in exactly that order."""
     assert H_padding >= 0, f"H_padding ({H_padding}) must be >= 0."
     assert W_padding >= 0, f"W_padding ({W_padding}) must be >= 0."
@@ -192,12 +192,12 @@ def get_two_sidded_padding(H_padding: int, W_padding: int) -> tuple[int, int, in
     return padding_left, padding_right, padding_top, padding_bottom
 
 
-def window_partition_3d(x: torch.Tensor, ws: tuple[int, int, int]) -> torch.Tensor:
+def window_partition_3d(x: torch.Tensor, ws: Tuple[int, int, int]) -> torch.Tensor:
     """Partition into windows.
 
     Args:
         x: (torch.Tensor): Input tensor of shape `(B, C, H, W, D)`.
-        ws: (tuple[int, int, int]): A 3D window size `(Wc, Wh, Ww)`.
+        ws: (Tuple[int, int, int]): A 3D window size `(Wc, Wh, Ww)`.
 
     Returns:
         torch.Tensor: Partitioning of shape `(num_windows*B, Wc, Wh, Ww, D)`.
@@ -212,12 +212,12 @@ def window_partition_3d(x: torch.Tensor, ws: tuple[int, int, int]) -> torch.Tens
     return windows
 
 
-def window_reverse_3d(windows: torch.Tensor, ws: tuple[int, int, int], C: int, H: int, W: int):
+def window_reverse_3d(windows: torch.Tensor, ws: Tuple[int, int, int], C: int, H: int, W: int):
     """Unpartition a partitioning.
 
     Args:
         windows (torch.Tensor): Partitioning of shape `(num_windows*B, Wc, Wh, Ww, D)`.
-        ws (tuple[int, int, int]): The 3D window size.
+        ws (Tuple[int, int, int]): The 3D window size.
         C (int): Number of levels.
         H (int): Height of image.
         W (int): Width of image.
@@ -249,7 +249,7 @@ def get_three_sidded_padding(
     C_padding: int,
     H_padding: int,
     W_padding: int,
-) -> tuple[int, int, int, int, int, int]:
+) -> Tuple[int, int, int, int, int, int]:
     """Returns the padding for the left, right, top, bottom, front, and back sides, in exactly that
     order."""
     assert C_padding >= 0, f"C_padding ({C_padding}) must be >= 0"
@@ -267,13 +267,13 @@ def get_three_sidded_padding(
     )
 
 
-def pad_3d(x: torch.Tensor, pad_size: tuple[int, int, int], value: float = 0.0) -> torch.Tensor:
+def pad_3d(x: torch.Tensor, pad_size: Tuple[int, int, int], value: float = 0.0) -> torch.Tensor:
     """Pads the input with value to the specified size."""
     # Padding is done from the last dimension. We use zero padding for the last dimension.
     return F.pad(x, (0, 0, *get_three_sidded_padding(*pad_size)), value=value)
 
 
-def crop_3d(x: torch.Tensor, pad_size: tuple[int, int, int]) -> torch.Tensor:
+def crop_3d(x: torch.Tensor, pad_size: Tuple[int, int, int]) -> torch.Tensor:
     """Undoes the `pad_3d` function by cropping the padded values."""
     B, C, H, W, D = x.shape
     Cp, Hp, Wp = pad_size
@@ -283,7 +283,7 @@ def crop_3d(x: torch.Tensor, pad_size: tuple[int, int, int]) -> torch.Tensor:
     return x
 
 
-def get_3d_merge_groups() -> list[tuple[int, int]]:
+def get_3d_merge_groups() -> list[Tuple[int, int]]:
     """Returns the groups to be merged for the 3D case to obtain left-right connectivity."""
     merge_groups_2d = [(1, 2), (4, 5), (7, 8)]
     merge_groups_3d = []
@@ -303,20 +303,20 @@ def compute_3d_shifted_window_mask(
     C: int,
     H: int,
     W: int,
-    ws: tuple[int, int, int],
-    ss: tuple[int, int, int],
+    ws: Tuple[int, int, int],
+    ss: Tuple[int, int, int],
     device: torch.device,
     dtype: torch.dtype = torch.bfloat16,
     warped: bool = True,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Computes the mask of each window for the shifted-window attention.
 
     Args:
         C (int): Number of levels.
         H (int): Height of the image.
         W (int): Width of the image.
-        ws (tuple[int, int, int]): Window sizes of the form `(Wc, Wh, Ww)`.
-        ss (tuple[int, int, int]): Shift sizes of the form `(Sc, Sh, Sw)`
+        ws (Tuple[int, int, int]): Window sizes of the form `(Wc, Wh, Ww)`.
+        ss (Tuple[int, int, int]): Shift sizes of the form `(Sc, Sh, Sw)`
         dtype (torch.dtype, optional): Data type of the mask. Defaults to `torch.bfloat16`.
         warped (bool): If `True`,assume that the left and right sides of the image are connected.
             Defaults to `True`.
@@ -366,8 +366,8 @@ class Swin3DTransformerBlock(nn.Module):
         dim: int,
         num_heads: int,
         time_dim: int,
-        window_size: tuple[int, int, int] = (2, 7, 7),
-        shift_size: tuple[int, int, int] = (0, 0, 0),
+        window_size: Tuple[int, int, int] = (2, 7, 7),
+        shift_size: Tuple[int, int, int] = (0, 0, 0),
         mlp_ratio: float = 4.0,
         qkv_bias: bool = True,
         drop: float = 0.0,
@@ -383,11 +383,11 @@ class Swin3DTransformerBlock(nn.Module):
 
         Args:
             dim (int): Number of input channels.
-            input_resolution (tuple[int, int]): Input resolution.
+            input_resolution (Tuple[int, int]): Input resolution.
             num_heads (int): Number of attention heads.
             time_dim (int): Dimension of the lead time embedding.
-            window_size (tuple[int, int, int]): Window size. Defaults to `(2, 7, 7)`.
-            shift_size (tuple[int, int, int]): Shift size for SW-MSA. Defaults to `(0, 0, 0)`.
+            window_size (Tuple[int, int, int]): Window size. Defaults to `(2, 7, 7)`.
+            shift_size (Tuple[int, int, int]): Shift size for SW-MSA. Defaults to `(0, 0, 0)`.
             mlp_ratio (float): Hidden layer dimensionality divided by that of the input for all
                 MLPs. Defaults to `4.0`.
             qkv_bias (bool, optional): If `True,` add a learnable bias to each query, key, and
@@ -438,7 +438,7 @@ class Swin3DTransformerBlock(nn.Module):
         self,
         x: torch.Tensor,
         c: torch.Tensor,
-        res: tuple[int, int, int],
+        res: Tuple[int, int, int],
         rollout_step: int,
         warped: bool = True,
     ) -> torch.Tensor:
@@ -447,7 +447,7 @@ class Swin3DTransformerBlock(nn.Module):
         Args:
             x (torch.Tensor): Input tokens of shape `(B, L, D)`.
             c (torch.Tensor): Conditioning context of shape `(B, D)`.
-            res (tuple[int, int, int]): Resolution of the input `x`.
+            res (Tuple[int, int, int]): Resolution of the input `x`.
             rollout_step (int): Roll-out step.
             warped (bool, optional): Connect the left and right sides. Defaults to `True`.
 
@@ -520,7 +520,7 @@ class PatchMerging3D(nn.Module):
         self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
         self.norm = nn.LayerNorm(4 * dim)
 
-    def _merge(self, x: torch.Tensor, res: tuple[int, int, int]) -> torch.Tensor:
+    def _merge(self, x: torch.Tensor, res: Tuple[int, int, int]) -> torch.Tensor:
         C, H, W = res
         B, L, D = x.shape
         assert L == C * H * W, f"Wrong feature size: {L} vs {C}*{H}*{W}={C*H*W}."
@@ -536,12 +536,12 @@ class PatchMerging3D(nn.Module):
         x = x.reshape(B, C, new_H // 2, 2, new_W // 2, 2, D)
         return rearrange(x, "B C H h W w D -> B (C H W) (h w D)")
 
-    def forward(self, x: torch.Tensor, input_resolution: tuple[int, int, int]) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, input_resolution: Tuple[int, int, int]) -> torch.Tensor:
         """Perform the path merging operation.
 
         Args:
             x (torch.Tensor): Input tokens of shape `(B, C*H*W, D)`.
-            input_resolution (tuple[int, int, int]): Resolution of `x` of the form `(C, H, W)`.
+            input_resolution (Tuple[int, int, int]): Resolution of `x` of the form `(C, H, W)`.
 
         Returns:
             torch.Tensor: Merged tokens of shape `(B, C*H/2*W/2, 2*D)`.
@@ -571,8 +571,8 @@ class PatchSplitting3D(nn.Module):
     def _split(
         self,
         x: torch.Tensor,
-        res: tuple[int, int, int],
-        crop: tuple[int, int, int],
+        res: Tuple[int, int, int],
+        crop: Tuple[int, int, int],
     ) -> torch.Tensor:
         C, H, W = res
         B, L, D = x.shape
@@ -587,8 +587,8 @@ class PatchSplitting3D(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        input_resolution: tuple[int, int, int],
-        crop: tuple[int, int, int] = (0, 0, 0),
+        input_resolution: Tuple[int, int, int],
+        crop: Tuple[int, int, int] = (0, 0, 0),
     ) -> torch.Tensor:
         """Perform the patch splitting.
 
@@ -596,8 +596,8 @@ class PatchSplitting3D(nn.Module):
 
         Args:
             x (torch.Tensor): Input tokens of shape `(B, C*H*W, D)`.
-            input_resolution (tuple[int, int, int]): Resolution of `x` of the form `(C, H, W)`.
-            crop (tuple[int, int, int], optional): Cropping for every dimension. Defaults to
+            input_resolution (Tuple[int, int, int]): Resolution of `x` of the form `(C, H, W)`.
+            crop (Tuple[int, int, int], optional): Cropping for every dimension. Defaults to
                 no cropping.
 
         Returns:
@@ -618,15 +618,15 @@ class BasicLayer3D(nn.Module):
         dim: int,
         depth: int,
         num_heads: int,
-        ws: tuple[int, int, int],
+        ws: Tuple[int, int, int],
         time_dim: int,
         mlp_ratio: float = 4.0,
         qkv_bias: bool = True,
         drop: float = 0.0,
         attn_drop: float = 0.0,
-        drop_path: float | list[float] = 0.0,
-        downsample: type[PatchMerging3D] | None = None,
-        upsample: type[PatchSplitting3D] | None = None,
+        drop_path: Union[float, list[float]] = 0.0,
+        downsample: Optional[Type[PatchMerging3D]] = None,
+        upsample: Optional[Type[PatchSplitting3D]] = None,
         scale_bias: float = 0.0,
         lora_steps: int = 40,
         lora_mode: LoRAMode = "single",
@@ -638,7 +638,7 @@ class BasicLayer3D(nn.Module):
             dim (int): Number of input channels.
             depth (int): Number of blocks.
             num_heads (int): Number of attention heads.
-            ws (tuple[int, int, int]): Window size.
+            ws (Tuple[int, int, int]): Window size.
             time_dim (int): Dimension of the lead time embedding.
             mlp_ratio (float): Hidden layer dimensionality divided by that of the input for all
                 MLPs. Defaults to `4.0`.
@@ -689,12 +689,12 @@ class BasicLayer3D(nn.Module):
         )
 
         if downsample is not None:
-            self.downsample: PatchMerging3D | None = downsample(dim=dim)
+            self.downsample: Optional[PatchMerging3D] = downsample(dim=dim)
         else:
             self.downsample = None
 
         if upsample is not None:
-            self.upsample: PatchSplitting3D | None = upsample(dim=dim)
+            self.upsample: Optional[PatchSplitting3D] = upsample(dim=dim)
         else:
             self.upsample = None
 
@@ -702,17 +702,18 @@ class BasicLayer3D(nn.Module):
         self,
         x: torch.Tensor,
         c: torch.Tensor,
-        res: tuple[int, int, int],
-        crop: tuple[int, int, int] = (0, 0, 0),
+        res: Tuple[int, int, int],
+        crop: Tuple[int, int, int] = (0, 0, 0),
         rollout_step: int = 0,
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+
         """Run the basic layer.
 
         Args:
             x (torch.Tensor): Input tokens of shape `(B, L, D)`.
             c (torch.Tensor): Conditioning context of shape `(B, D)`.
-            res (tuple[int, int, int]): Resolution of the input `x`.
-            crop (tuple[int, int, int]): Cropping for every dimension.
+            res (Tuple[int, int, int]): Resolution of the input `x`.
+            crop (Tuple[int, int, int]): Cropping for every dimension.
             rollout_step (int): Roll-out step.
 
         Returns:
@@ -750,11 +751,11 @@ class Swin3DTransformerBackbone(nn.Module):
     def __init__(
         self,
         embed_dim: int = 96,
-        encoder_depths: tuple[int, ...] = (2, 2, 6, 2),
-        encoder_num_heads: tuple[int, ...] = (3, 6, 12, 24),
-        decoder_depths: tuple[int, ...] = (2, 6, 2, 2),
-        decoder_num_heads: tuple[int, ...] = (24, 12, 6, 3),
-        window_size: int | tuple[int, int, int] = 7,
+        encoder_depths: Tuple[int, ...] = (2, 2, 6, 2),
+        encoder_num_heads: Tuple[int, ...] = (3, 6, 12, 24),
+        decoder_depths: Tuple[int, ...] = (2, 6, 2, 2),
+        decoder_num_heads: Tuple[int, ...] = (24, 12, 6, 3),
+        window_size: Union[int, Tuple[int, int, int]] = 7,
         mlp_ratio: float = 4.0,
         qkv_bias: bool = True,
         drop_rate: float = 0.0,
@@ -767,15 +768,15 @@ class Swin3DTransformerBackbone(nn.Module):
         """
         Args:
             embed_dim (int): Patch embedding dimension. Default to `96`.
-            encoder_depths (tuple[int, ...]): Number of blocks in each encoder layer. Defaults to
+            encoder_depths (Tuple[int, ...]): Number of blocks in each encoder layer. Defaults to
                 `(2, 2, 6, 2)`.
-            encoder_num_heads (tuple[int, ...]): Number of attention heads in each encoder layer.
+            encoder_num_heads (Tuple[int, ...]): Number of attention heads in each encoder layer.
                 Default to `(3, 6, 12, 24)`.
-            decoder_depths (tuple[int, ...]): Number of blocks in each decoder layer. Defaults to
+            decoder_depths (Tuple[int, ...]): Number of blocks in each decoder layer. Defaults to
                 `(2, 6, 2, 2)`.
-            decoder_num_heads (tuple[int, ...]): Number of attention heads in each decoder layer.
+            decoder_num_heads (Tuple[int, ...]): Number of attention heads in each decoder layer.
                 Defaults to `(24, 12, 6, 3)`.
-            window_size (int | tuple[int, int, int]): Window size. Defaults to `7`.
+            window_size (Union[int, Tuple[int, int, int]]): Window size. Defaults to `7`.
             mlp_ratio (float): Hidden layer dimensionality divided by that of the input for all
                 MLPs. Defaults to `4.0`.
             qkv_bias (bool): If `True`, add a learnable bias to the query, key, and value. Defaults
@@ -861,8 +862,8 @@ class Swin3DTransformerBackbone(nn.Module):
             bly.init_respostnorm()
 
     def get_encoder_specs(
-        self, patch_res: tuple[int, int, int]
-    ) -> tuple[list[tuple[int, int, int]], list[tuple[int, int, int]]]:
+        self, patch_res: Tuple[int, int, int]
+    ) -> Tuple[list[Tuple[int, int, int]], list[Tuple[int, int, int]]]:
         """Gets the input resolution and output padding of each encoder layer."""
         all_res = [patch_res]
         padded_outs = []
@@ -881,7 +882,7 @@ class Swin3DTransformerBackbone(nn.Module):
         x: torch.Tensor,
         lead_time: timedelta,
         rollout_step: int,
-        patch_res: tuple[int, int, int],
+        patch_res: Tuple[int, int, int],
     ) -> torch.Tensor:
         """Run the backbone.
 
@@ -889,7 +890,7 @@ class Swin3DTransformerBackbone(nn.Module):
             x (torch.Tensor): Input tokens of shape `(B, L, D)`.
             lead_time (datetime.timedelta): Lead time.
             rollout_step (int): Roll-out step.
-            patch_res (tuple[int, int, int]): Patch resolution of the form `(C, H, W)`.
+            patch_res (Tuple[int, int, int]): Patch resolution of the form `(C, H, W)`.
 
         Returns:
             torch.Tensor: Output tokens of shape `(B, L, D)`.

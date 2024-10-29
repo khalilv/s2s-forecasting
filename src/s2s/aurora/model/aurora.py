@@ -5,7 +5,7 @@ import dataclasses
 import warnings
 from datetime import timedelta
 from functools import partial
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 from huggingface_hub import hf_hub_download
@@ -30,14 +30,14 @@ class Aurora(torch.nn.Module):
 
     def __init__(
         self,
-        surf_vars: tuple[str, ...] = ("2t", "10u", "10v", "msl"),
-        static_vars: tuple[str, ...] = ("lsm", "z", "slt"),
-        atmos_vars: tuple[str, ...] = ("z", "u", "v", "t", "q"),
-        window_size: tuple[int, int, int] = (2, 6, 12),
-        encoder_depths: tuple[int, ...] = (6, 10, 8),
-        encoder_num_heads: tuple[int, ...] = (8, 16, 32),
-        decoder_depths: tuple[int, ...] = (8, 10, 6),
-        decoder_num_heads: tuple[int, ...] = (32, 16, 8),
+        surf_vars: Tuple[str, ...] = ("2t", "10u", "10v", "msl"),
+        static_vars: Tuple[str, ...] = ("lsm", "z", "slt"),
+        atmos_vars: Tuple[str, ...] = ("z", "u", "v", "t", "q"),
+        window_size: Tuple[int, int, int] = (2, 6, 12),
+        encoder_depths: Tuple[int, ...] = (6, 10, 8),
+        encoder_num_heads: Tuple[int, ...] = (8, 16, 32),
+        decoder_depths: Tuple[int, ...] = (8, 10, 6),
+        decoder_num_heads: Tuple[int, ...] = (32, 16, 8),
         latent_levels: int = 4,
         patch_size: int = 4,
         embed_dim: int = 512,
@@ -53,29 +53,29 @@ class Aurora(torch.nn.Module):
         use_lora: bool = True,
         lora_steps: int = 40,
         lora_mode: LoRAMode = "single",
-        surf_stats: Optional[dict[str, tuple[float, float]]] = None,
+        surf_stats: Optional[Dict[str, Tuple[float, float]]] = None,
         autocast: bool = False,
     ) -> None:
         """Construct an instance of the model.
 
         Args:
-            surf_vars (tuple[str, ...], optional): All surface-level variables supported by the
+            surf_vars (Tuple[str, ...], optional): All surface-level variables supported by the
                 model.
-            static_vars (tuple[str, ...], optional): All static variables supported by the
+            static_vars (Tuple[str, ...], optional): All static variables supported by the
                 model.
-            atmos_vars (tuple[str, ...], optional): All atmospheric variables supported by the
+            atmos_vars (Tuple[str, ...], optional): All atmospheric variables supported by the
                 model.
-            window_size (tuple[int, int, int], optional): Vertical height, height, and width of the
+            window_size (Tuple[int, int, int], optional): Vertical height, height, and width of the
                 window of the underlying Swin transformer.
-            encoder_depths (tuple[int, ...], optional): Number of blocks in each encoder layer.
-            encoder_num_heads (tuple[int, ...], optional): Number of attention heads in each encoder
+            encoder_depths (Tuple[int, ...], optional): Number of blocks in each encoder layer.
+            encoder_num_heads (Tuple[int, ...], optional): Number of attention heads in each encoder
                 layer. The dimensionality doubles after every layer. To keep the dimensionality of
                 every head constant, you want to double the number of heads after every layer. The
                 dimensionality of attention head of the first layer is determined by `embed_dim`
                 divided by the value here. For all cases except one, this is equal to `64`.
-            decoder_depths (tuple[int, ...], optional): Number of blocks in each decoder layer.
+            decoder_depths (Tuple[int, ...], optional): Number of blocks in each decoder layer.
                 Generally, you want this to be the reversal of `encoder_depths`.
-            decoder_num_heads (tuple[int, ...], optional): Number of attention heads in each decoder
+            decoder_num_heads (Tuple[int, ...], optional): Number of attention heads in each decoder
                 layer. Generally, you want this to be the reversal of `encoder_num_heads`.
             latent_levels (int, optional): Number of latent pressure levels.
             patch_size (int, optional): Patch size.
@@ -102,7 +102,7 @@ class Aurora(torch.nn.Module):
             lora_mode (str, optional): LoRA mode. `"single"` uses the same LoRA for all roll-out
                 steps, and `"all"` uses a different LoRA for every roll-out step. Defaults to
                 `"single"`.
-            surf_stats (dict[str, tuple[float, float]], optional): For these surface-level
+            surf_stats (Dict[str, Tuple[float, float]], optional): For these surface-level
                 variables, adjust the normalisation to the given tuple consisting of a new location
                 and scale.
             autocast (bool, optional): Use `torch.autocast` to reduce memory usage. Defaults to
@@ -330,7 +330,7 @@ class Aurora(torch.nn.Module):
 
         self.load_state_dict(d, strict=strict)
 
-    def adapt_checkpoint_max_history_size(self, checkpoint: dict[str, torch.Tensor]) -> None:
+    def adapt_checkpoint_max_history_size(self, checkpoint: Dict[str, torch.Tensor]) -> None:
         """Adapt a checkpoint with smaller `max_history_size` to a model with a larger
         `max_history_size` than the current model.
 

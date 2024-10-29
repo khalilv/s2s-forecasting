@@ -1,6 +1,6 @@
 """Copyright (c) Microsoft Corporation. Licensed under the MIT license."""
 
-from typing import TypeVar
+from typing import TypeVar, Tuple
 
 import torch
 from einops import rearrange
@@ -47,10 +47,10 @@ def check_lat_lon_dtype(lat: torch.Tensor, lon: torch.Tensor) -> None:
     assert lon.dtype in [torch.float32, torch.float64], f"Longitude num. unstable: {lon.dtype}."
 
 
-T = TypeVar("T", tuple[int, int], tuple[int, int, int])
+T = TypeVar("T", Tuple[int, int], Tuple[int, int, int])
 
 
-def maybe_adjust_windows(window_size: T, shift_size: T, res: T) -> tuple[T, T]:
+def maybe_adjust_windows(window_size: T, shift_size: T, res: T) -> Tuple[T, T]:
     """Adjust the window size and shift size if the input resolution is smaller than the window
     size."""
     err_msg = f"Expected same length, found {len(window_size)}, {len(shift_size)} and {len(res)}."
@@ -62,8 +62,8 @@ def maybe_adjust_windows(window_size: T, shift_size: T, res: T) -> tuple[T, T]:
             mut_shift_size[i] = 0
             mut_window_size[i] = res[i]
 
-    new_window_size: T = tuple(mut_window_size)  # type: ignore[assignment]
-    new_shift_size: T = tuple(mut_shift_size)  # type: ignore[assignment]
+    new_window_size: T = Tuple(mut_window_size)  # type: ignore[assignment]
+    new_shift_size: T = Tuple(mut_shift_size)  # type: ignore[assignment]
 
     assert min(new_window_size) > 0, f"Window size must be positive. Found {new_window_size}."
     assert min(new_shift_size) >= 0, f"Shift size must be non-negative. Found {new_shift_size}."
