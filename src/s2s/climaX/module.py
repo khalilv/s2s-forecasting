@@ -207,7 +207,7 @@ class GlobalForecastModule(LightningModule):
         x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
         
         #append 2d latitude to static variables
-        lat2d_expanded = self.lat2d.unsqueeze(0).unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
+        lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
         static = torch.cat((static,lat2d_expanded), dim=1)
 
         #prepend static variables to input variables
