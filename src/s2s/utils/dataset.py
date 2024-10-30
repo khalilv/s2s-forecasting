@@ -14,9 +14,11 @@ class NpyReader(IterableDataset):
     def __init__(
         self,
         file_list,
+        static_variable_file,
         start_idx,
         end_idx,
         in_variables,
+        static_variables,
         out_variables,
         max_predict_range: int = 6,
         history_range: int = 1,
@@ -29,7 +31,9 @@ class NpyReader(IterableDataset):
         end_idx = int(end_idx * len(file_list))
         file_list = file_list[start_idx:end_idx]
         self.file_list = [f for f in file_list if "climatology" not in f]
+        self.static_variable_file = static_variable_file
         self.in_variables = in_variables
+        self.static_variables = static_variables
         self.out_variables = out_variables if out_variables is not None else in_variables
         self.shuffle = shuffle
         self.multi_dataset_training = multi_dataset_training
@@ -64,6 +68,9 @@ class NpyReader(IterableDataset):
             iter_start = worker_id * per_worker
             iter_end = iter_start + per_worker
         
+        static_data = np.load(self.static_variable_file)
+        static_data_dict = {k: static_data[k] for k in self.static_variables}
+
         #carry_over_data prevents needlessly throwing out data samples. 
         #it will only be used if files have temporal ordering (i.e. shuffle=false)
         self.carry_over_data = None 
@@ -81,7 +88,7 @@ class NpyReader(IterableDataset):
                 self.carry_over_data = {k: data_dict[k][-(self.max_predict_range + self.history_range - 1):] for k in self.in_variables}
                 self.carry_over_data['timestamps'] = timestamps[-(self.max_predict_range + self.history_range - 1):]
             
-            yield data_dict, self.in_variables, self.out_variables, timestamps, self.max_predict_range, self.history_range, self.hrs_each_step
+            yield data_dict, static_data_dict, self.in_variables, self.static_variables, self.out_variables, timestamps, self.max_predict_range, self.history_range, self.hrs_each_step
 
 
 class Forecast(IterableDataset):
@@ -93,15 +100,16 @@ class Forecast(IterableDataset):
         self.random_lead_time = random_lead_time
 
     def __iter__(self):
-        for data, in_variables, out_variables, timestamps, max_predict_range, history_range, hrs_each_step in self.dataset:
+        for data, static_data, in_variables, static_variables, out_variables, timestamps, max_predict_range, history_range, hrs_each_step in self.dataset:
             x = np.concatenate([data[k].astype(np.float32) for k in data.keys()], axis=1) # T, V_in, H, W
             x = torch.from_numpy(x)
             y = np.concatenate([data[k].astype(np.float32) for k in out_variables], axis=1) # T, V_out, H, W
             y = torch.from_numpy(y)
-
+            static = np.stack([static_data[k].astype(np.float32) for k in static_variables], axis=0) #V_static, H, W
+            static = torch.from_numpy(static)
             
             inputs = torch.empty((x.shape[0] - history_range - max_predict_range + 1, 
-                                  history_range, x.shape[1], x.shape[2], x.shape[3])) #T,R,V,H,W where R = history size
+                                  history_range, x.shape[1], x.shape[2], x.shape[3])) #T, R, V, H, W where R = history size
             input_timestamps = []
 
             for t in range(history_range, x.shape[0]-max_predict_range + 1):
@@ -118,28 +126,30 @@ class Forecast(IterableDataset):
             output_ids = torch.arange(inputs.shape[0]) + predict_ranges + history_range - 1
             outputs = y[output_ids]
             output_timestamps = timestamps[output_ids]
-            
-            yield inputs, outputs, lead_times, in_variables, out_variables, input_timestamps, output_timestamps
+
+            yield inputs, static, outputs, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps
 
 
 class IndividualForecastDataIter(IterableDataset):
-    def __init__(self, dataset, in_transforms: torch.nn.Module, output_transforms: torch.nn.Module, region_info = None):
+    def __init__(self, dataset, normalize_data: bool, in_transforms: torch.nn.Module, static_transforms: torch.nn.Module, output_transforms: torch.nn.Module, region_info = None):
         super().__init__()
         self.dataset = dataset
+        self.normalize_data = normalize_data
         self.in_transforms = in_transforms
+        self.static_transforms = static_transforms
         self.output_transforms = output_transforms
         self.region_info = region_info
         if region_info is not None:
             raise NotImplementedError("Regional forecast is not supported yet.")
 
     def __iter__(self):
-        for (inp, out, lead_times, in_variables, out_variables, input_timestamps, output_timestamps) in self.dataset:
+        for (inp, static, out, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps) in self.dataset:
             assert inp.shape[0] == out.shape[0]
             for i in range(inp.shape[0]):
-                if self.region_info is not None:
-                    yield self.in_transforms(inp[i]), self.output_transforms(out[i]), lead_times[i], in_variables, out_variables, self.region_info, input_timestamps[i], output_timestamps[i]
+                if self.normalize_data:
+                    yield self.in_transforms(inp[i]), self.static_transforms(static), self.output_transforms(out[i]), lead_times[i], in_variables, static_variables, out_variables, input_timestamps[i], output_timestamps[i]
                 else:
-                    yield self.in_transforms(inp[i]), self.output_transforms(out[i]), lead_times[i], in_variables, out_variables, input_timestamps[i], output_timestamps[i]
+                    yield inp[i], static, out[i], lead_times[i], in_variables, static_variables, out_variables, input_timestamps[i], output_timestamps[i]
 
 
 class ShuffleIterableDataset(IterableDataset):

@@ -17,7 +17,7 @@ from s2s.utils.metrics import (
     lat_weighted_acc_spatial_map,
     lat_weighted_rmse_spatial_map
 )
-from s2s.utils.pos_embed import interpolate_pos_embed
+from s2s.climaX.pos_embed import interpolate_pos_embed
 from s2s.utils.data_utils import plot_spatial_map
 #3) Global forecast module - abstraction for training/validation/testing steps. setup for the module including hyperparameters is included here
 
@@ -113,18 +113,20 @@ class GlobalForecastModule(LightningModule):
         print(msg)
     
     def init_metrics(self):
+        denormalization = self.denormalization if self.denormalize_data else None
         self.train_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat)
-        self.val_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, self.denormalization)
-        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, self.denormalization)
-        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.val_clim, self.val_clim_timestamps, self.denormalization)
-        self.test_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, self.denormalization)        
-        self.test_lat_weighted_rmse_spatial_map = lat_weighted_rmse_spatial_map(self.out_variables, self.lat, self.denormalization)
-        self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, self.denormalization)
-        self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.test_clim, self.test_clim_timestamps, self.denormalization)
-        self.test_lat_weighted_acc_spatial_map = lat_weighted_acc_spatial_map(self.out_variables, self.lat, self.test_clim, self.test_clim_timestamps, self.denormalization)
+        self.val_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, denormalization)
+        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalization)
+        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.val_clim, self.val_clim_timestamps, denormalization)
+        self.test_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, denormalization)        
+        self.test_lat_weighted_rmse_spatial_map = lat_weighted_rmse_spatial_map(self.out_variables, self.lat, denormalization)
+        self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalization)
+        self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.test_clim, self.test_clim_timestamps, denormalization)
+        self.test_lat_weighted_acc_spatial_map = lat_weighted_acc_spatial_map(self.out_variables, self.lat, self.test_clim, self.test_clim_timestamps, denormalization)
 
-    def init_network(self, in_vars: list):
-        self.net = ClimaX(in_vars=self.in_variables, 
+    def init_network(self):
+        variables = self.static_variables + ["lattitude"] + self.in_variables #climaX includes 2d latitude as an input field
+        self.net = ClimaX(in_vars=variables, 
                           img_size=self.img_size, 
                           patch_size=self.patch_size, 
                           embed_dim=self.embed_dim, 
@@ -141,12 +143,22 @@ class GlobalForecastModule(LightningModule):
     def set_denormalization(self, mean, std):
         self.denormalization = transforms.Normalize(mean, std)
 
+    def set_denormalize_data(self, normalized_data: bool):
+        self.denormalize_data = normalized_data
+        
     def set_lat_lon(self, lat, lon):
         self.lat = lat
         self.lon = lon
+    
+    def set_lat2d(self, normalize: bool):
+        self.lat2d = torch.from_numpy(np.tile(self.lat, (self.img_size[1], 1)).T).unsqueeze(0) #climaX includes 2d latitude as an input field
+        if normalize:
+            normalization = transforms.Normalize(self.lat2d.mean(), self.lat2d.std())
+            self.lat2d = normalization(self.lat2d) #normalized lat2d with shape [1, H, W]
 
-    def set_variables(self, in_variables, out_variables):
+    def set_variables(self, in_variables: list, static_variables: list, out_variables: list):
         self.in_variables = in_variables
+        self.static_variables = static_variables
         self.out_variables = out_variables
 
     def set_val_clim(self, clim, timestamps):
@@ -156,16 +168,26 @@ class GlobalForecastModule(LightningModule):
     def set_test_clim(self, clim, timestamps):
         self.test_clim = clim
         self.test_clim_timestamps = timestamps
+    
 
-    # can add multi-step training here - add k rollouts then average the loss before returning
     def training_step(self, batch: Any, batch_idx: int):
-        x, y, lead_times, variables, out_variables, input_timestamps, output_timestamps = batch #spread batch data 
- 
-        if x.shape[1] > 1:
+        x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch #spread batch data 
+        
+        #append 2d latitude to static variables
+        lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
+        static = torch.cat((static,lat2d_expanded), dim=1)
+
+        #prepend static variables to input variables
+        static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
+        inputs = torch.cat((static, x), dim=2).to(torch.float32)
+
+        in_variables = static_variables + ["lattitude"] + variables
+
+        if inputs.shape[1] > 1:
             raise NotImplementedError("history_range > 1 is not supported yet.")
-        x = x.squeeze() #squeeze history dimension
+        inputs = inputs.squeeze() #squeeze history dimension
    
-        preds = self.net.forward(x, lead_times, variables, out_variables)
+        preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
         
         #cast to float
         preds = preds.float()
@@ -182,13 +204,23 @@ class GlobalForecastModule(LightningModule):
         return batch_loss['w_mse']
     
     def validation_step(self, batch: Any, batch_idx: int):
-        x, y, lead_times, variables, out_variables, input_timestamps, output_timestamps = batch
+        x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
+        
+        #append 2d latitude to static variables
+        lat2d_expanded = self.lat2d.unsqueeze(0).unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
+        static = torch.cat((static,lat2d_expanded), dim=1)
 
-        if x.shape[1] > 1:
+        #prepend static variables to input variables
+        static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
+        inputs = torch.cat((static, x), dim=2).to(torch.float32)
+
+        in_variables = static_variables + ["lattitude"] + variables
+
+        if inputs.shape[1] > 1:
             raise NotImplementedError("history_range > 1 is not supported yet.")
-        x = x.squeeze() #squeeze history dimension
+        inputs = inputs.squeeze() #squeeze history dimension
 
-        preds = self.net.forward(x, lead_times, variables, out_variables)
+        preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
         
         #cast to float
         preds = preds.float()
@@ -217,13 +249,23 @@ class GlobalForecastModule(LightningModule):
         self.val_lat_weighted_acc.reset()
 
     def test_step(self, batch: Any, batch_idx: int):
-        x, y, lead_times, variables, out_variables, input_timestamps, output_timestamps = batch
+        x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
 
-        if x.shape[1] > 1:
+        #append 2d latitude to static variables
+        lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
+        static = torch.cat((static,lat2d_expanded), dim=1)
+
+        #prepend static variables to input variables
+        static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
+        inputs = torch.cat((static, x), dim=2).to(torch.float32)
+
+        in_variables = static_variables + ["lattitude"] + variables
+
+        if inputs.shape[1] > 1:
             raise NotImplementedError("history_range > 1 is not supported yet.")
-        x = x.squeeze() #squeeze history dimension
+        inputs = inputs.squeeze() #squeeze history dimension
 
-        preds = self.net.forward(x, lead_times, variables, out_variables)
+        preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
 
         #cast to float
         preds = preds.float()

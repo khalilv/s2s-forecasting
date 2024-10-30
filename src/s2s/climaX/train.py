@@ -3,7 +3,7 @@
 
 import os
 
-from s2s.climaX.datamodule import GlobalForecastDataModule
+from s2s.utils.datamodule import GlobalForecastDataModule
 from s2s.climaX.module import GlobalForecastModule
 from pytorch_lightning.cli import LightningCLI
 
@@ -25,12 +25,14 @@ def main():
     mean_norm, std_norm = normalization.mean, normalization.std
     mean_denorm, std_denorm = -mean_norm / std_norm, 1 / std_norm
     cli.model.set_denormalization(mean_denorm, std_denorm)
+    cli.model.set_denormalize_data(cli.datamodule.normalize_data)
     cli.model.set_lat_lon(*cli.datamodule.get_lat_lon())
-    cli.model.set_variables(cli.datamodule.in_variables, cli.datamodule.out_variables)
+    cli.model.set_lat2d(cli.datamodule.normalize_data)
+    cli.model.set_variables(cli.datamodule.in_variables, cli.datamodule.static_variables, cli.datamodule.out_variables)
     cli.model.set_val_clim(cli.datamodule.val_clim, cli.datamodule.val_clim_timestamps)
     cli.model.set_test_clim(cli.datamodule.test_clim, cli.datamodule.val_clim_timestamps)
     cli.model.init_metrics()
-    cli.model.init_network(cli.datamodule.in_variables)
+    cli.model.init_network()
 
     # fit() runs the training
     cli.trainer.fit(cli.model, datamodule=cli.datamodule)

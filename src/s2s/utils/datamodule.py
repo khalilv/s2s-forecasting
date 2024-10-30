@@ -38,7 +38,8 @@ class GlobalForecastDataModule(LightningDataModule):
         self,
         root_dir,
         in_variables,
-        buffer_size,
+        static_variables,
+        buffer_size=10000,
         out_variables=None,
         predict_range: int = 6,
         history_range: int = 1,
@@ -46,6 +47,7 @@ class GlobalForecastDataModule(LightningDataModule):
         batch_size: int = 64,
         num_workers: int = 0,
         pin_memory: bool = False,
+        normalize_data: bool = False,
     ):
         super().__init__()
         if num_workers > 1:
@@ -63,6 +65,7 @@ class GlobalForecastDataModule(LightningDataModule):
         self.root_dir = root_dir
         self.in_variables = in_variables
         self.out_variables = out_variables
+        self.static_variables = static_variables
         self.buffer_size = buffer_size
         self.predict_range = predict_range
         self.history_range = history_range
@@ -70,25 +73,28 @@ class GlobalForecastDataModule(LightningDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
+        self.normalize_data = normalize_data
 
         self.lister_train = list(dp.iter.FileLister(os.path.join(self.root_dir, "train")))
         self.lister_val = list(dp.iter.FileLister(os.path.join(self.root_dir, "val")))
         self.lister_test = list(dp.iter.FileLister(os.path.join(self.root_dir, "test")))
-        
+        self.static_variable_file = os.path.join(self.root_dir, "static", "static.npz")
+
         self.in_transforms = self.get_normalize(self.in_variables)
         self.output_transforms = self.get_normalize(self.out_variables)
-        
-        self.val_clim, self.val_clim_timestamps = self.get_climatology("val", self.out_variables)
-        self.test_clim, self.test_clim_timestamps = self.get_climatology("test", self.out_variables)
+        self.static_transforms = self.get_normalize(self.static_variables, "static")
+
+        self.val_clim, self.val_clim_timestamps = self.get_climatology(self.out_variables, "val")
+        self.test_clim, self.test_clim_timestamps = self.get_climatology(self.out_variables, "test")
 
         self.data_train: Optional[IterableDataset] = None
         self.data_val: Optional[IterableDataset] = None
         self.data_test: Optional[IterableDataset] = None
         
-    def get_normalize(self, variables):
-        normalize_mean = dict(np.load(os.path.join(self.root_dir, "normalize_mean.npz")))
+    def get_normalize(self, variables, partition = ""):
+        normalize_mean = dict(np.load(os.path.join(self.root_dir, partition, "normalize_mean.npz")))
         normalize_mean = np.array([normalize_mean[var] for var in variables])
-        normalize_std = dict(np.load(os.path.join(self.root_dir, "normalize_std.npz")))
+        normalize_std = dict(np.load(os.path.join(self.root_dir, partition, "normalize_std.npz")))
         normalize_std = np.array([normalize_std[var] for var in variables])
         return transforms.Normalize(normalize_mean, normalize_std)
 
@@ -97,7 +103,7 @@ class GlobalForecastDataModule(LightningDataModule):
         lon = np.load(os.path.join(self.root_dir, "lon.npy"))
         return lat, lon
 
-    def get_climatology(self, partition, variables):
+    def get_climatology(self, variables, partition = ""):
         files = glob.glob(os.path.join(self.root_dir, partition, "*climatology*.npz"))
         assert len(files) == 1, f"Expected exactly one file in {partition} directory, but found {len(files)}"
         path = files[0]
@@ -115,9 +121,11 @@ class GlobalForecastDataModule(LightningDataModule):
                     Forecast(
                         NpyReader(
                             file_list=self.lister_train,
+                            static_variable_file=self.static_variable_file,
                             start_idx=0,
                             end_idx=1,
                             in_variables=self.in_variables,
+                            static_variables=self.static_variables,
                             out_variables=self.out_variables,
                             shuffle=False,
                             multi_dataset_training=False,
@@ -127,7 +135,9 @@ class GlobalForecastDataModule(LightningDataModule):
                         ),
                         random_lead_time=False,
                     ),
+                    normalize_data = self.normalize_data,
                     in_transforms=self.in_transforms,
+                    static_transforms=self.static_transforms,
                     output_transforms=self.output_transforms,
                 ),
                 buffer_size=self.buffer_size,
@@ -137,9 +147,11 @@ class GlobalForecastDataModule(LightningDataModule):
                 Forecast(
                     NpyReader(
                         file_list=self.lister_val,
+                        static_variable_file=self.static_variable_file,
                         start_idx=0,
                         end_idx=1,
                         in_variables=self.in_variables,
+                        static_variables=self.static_variables,
                         out_variables=self.out_variables,
                         shuffle=False,
                         multi_dataset_training=False,
@@ -149,7 +161,9 @@ class GlobalForecastDataModule(LightningDataModule):
                     ),
                     random_lead_time=False,
                 ),
+                normalize_data = self.normalize_data,
                 in_transforms=self.in_transforms,
+                static_transforms=self.static_transforms,
                 output_transforms=self.output_transforms,
             )
 
@@ -157,9 +171,11 @@ class GlobalForecastDataModule(LightningDataModule):
                 Forecast(
                     NpyReader(
                         file_list=self.lister_test,
+                        static_variable_file=self.static_variable_file,
                         start_idx=0,
                         end_idx=1,
                         in_variables=self.in_variables,
+                        static_variables=self.static_variables,
                         out_variables=self.out_variables,
                         shuffle=False,
                         multi_dataset_training=False,
@@ -169,7 +185,9 @@ class GlobalForecastDataModule(LightningDataModule):
                     ),
                     random_lead_time=False,
                 ),
+                normalize_data = self.normalize_data,
                 in_transforms=self.in_transforms,
+                static_transforms=self.static_transforms,
                 output_transforms=self.output_transforms,
             )
 
@@ -187,7 +205,6 @@ class GlobalForecastDataModule(LightningDataModule):
         return DataLoader(
             self.data_val,
             batch_size=self.batch_size,
-            shuffle=False,
             drop_last=False,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
@@ -198,7 +215,6 @@ class GlobalForecastDataModule(LightningDataModule):
         return DataLoader(
             self.data_test,
             batch_size=self.batch_size,
-            shuffle=False,
             drop_last=False,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,

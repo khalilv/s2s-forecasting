@@ -8,12 +8,12 @@ import torch
 import torch.nn as nn
 from timm.models.vision_transformer import Block, PatchEmbed, trunc_normal_
 
-from s2s.utils.pos_embed import (
+from s2s.climaX.pos_embed import (
     get_1d_sincos_pos_embed_from_grid,
     get_2d_sincos_pos_embed,
 )
 
-from ..utils.parallelpatchembed import ParallelVarPatchEmbed
+from s2s.climaX.parallelpatchembed import ParallelVarPatchEmbed
 
 #4) Core architecture of ClimaX - should make an extension of this class to modify forward passes
 
