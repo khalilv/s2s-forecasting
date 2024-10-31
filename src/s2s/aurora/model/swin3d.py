@@ -9,7 +9,7 @@ Code adapted from
 import itertools
 from datetime import timedelta
 from functools import lru_cache
-from typing import Optional, Union, Tuple, Type
+from typing import Optional, Union, Tuple, Type, List
 
 import torch
 import torch.nn as nn
@@ -283,7 +283,7 @@ def crop_3d(x: torch.Tensor, pad_size: Tuple[int, int, int]) -> torch.Tensor:
     return x
 
 
-def get_3d_merge_groups() -> list[Tuple[int, int]]:
+def get_3d_merge_groups() -> List[Tuple[int, int]]:
     """Returns the groups to be merged for the 3D case to obtain left-right connectivity."""
     merge_groups_2d = [(1, 2), (4, 5), (7, 8)]
     merge_groups_3d = []
@@ -624,7 +624,7 @@ class BasicLayer3D(nn.Module):
         qkv_bias: bool = True,
         drop: float = 0.0,
         attn_drop: float = 0.0,
-        drop_path: Union[float, list[float]] = 0.0,
+        drop_path: Union[float, List[float]] = 0.0,
         downsample: Optional[Type[PatchMerging3D]] = None,
         upsample: Optional[Type[PatchSplitting3D]] = None,
         scale_bias: float = 0.0,
@@ -805,7 +805,7 @@ class Swin3DTransformerBackbone(nn.Module):
         )
 
         assert sum(encoder_depths) == sum(decoder_depths)
-        dpr: list[float] = [
+        dpr: List[float] = [
             x.item() for x in torch.linspace(0, drop_path_rate, sum(encoder_depths))
         ]
 
@@ -863,7 +863,7 @@ class Swin3DTransformerBackbone(nn.Module):
 
     def get_encoder_specs(
         self, patch_res: Tuple[int, int, int]
-    ) -> Tuple[list[Tuple[int, int, int]], list[Tuple[int, int, int]]]:
+    ) -> Tuple[List[Tuple[int, int, int]], List[Tuple[int, int, int]]]:
         """Gets the input resolution and output padding of each encoder layer."""
         all_res = [patch_res]
         padded_outs = []

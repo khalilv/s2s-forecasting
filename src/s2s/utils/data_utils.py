@@ -16,21 +16,22 @@ NAME_TO_VAR = {
     "total_precipitation": "tp",
     "land_sea_mask": "lsm",
     "orography": "orography",
-    "lattitude": "lat2d",
     "geopotential": "z",
     "u_component_of_wind": "u",
     "v_component_of_wind": "v",
     "temperature": "t",
     "relative_humidity": "r",
     "specific_humidity": "q",
+    "geopotential_at_surface": "z",
+    "soil_type": "slt",
+    "mean_sea_level_pressure": "msl",
 }
-
-VAR_TO_NAME = {v: k for k, v in NAME_TO_VAR.items()}
 
 STATIC_VARS = [
     "land_sea_mask",
     "orography",
-    "lattitude",
+    "geopotential_at_surface",
+    "soil_type",
 ]
 
 SURFACE_VARS = [
@@ -56,31 +57,28 @@ DEFAULT_PRESSURE_LEVELS = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850,
 
 HRS_PER_LEAP_YEAR = 8784
 
-# def split_variables(variables):
-#     """Split input variables into static, surface, and atmospheric variables.
+def split_surface_atmospheric(variables: list):
+    """Split input variables into surface, and atmospheric variables.
     
-#     Args:
-#         variables (list): List of variable names
+    Args:
+        variables (list): List of variable names
         
-#     Returns:
-#         tuple: Lists of (static_vars, surface_vars, atmospheric_vars)
-#     """
-#     static_variables = []
-#     surface_variables = []
-#     atmospheric_variables = []
+    Returns:
+        tuple: Lists of (surface_vars, atmospheric_vars)
+    """
+    surface_vars = []
+    atmospheric_vars = []
     
-#     for var in variables:
-#         # Remove pressure level suffix for atmospheric variables
-#         base_var = var.split('_')[0] if var[0].isdigit() else '_'.join(var.split('_')[:-1]) if var.split('_')[-1].isdigit() else var
-        
-#         if base_var in STATIC_VARS:
-#             static_variables.append(var)
-#         elif base_var in SURFACE_VARS:
-#             surface_variables.append(var)
-#         elif base_var in ATMOSPHERIC_VARS:
-#             atmospheric_variables.append(var)
+    for var in variables:
+        if var in SURFACE_VARS:
+            surface_vars.append(var)
+            continue
             
-#     return static_vars, surface_vars, atmospheric_vars
+        atm_var = var[:-4]
+        if atm_var in ATMOSPHERIC_VARS and atm_var not in atmospheric_vars:
+            atmospheric_vars.append(atm_var)
+                
+    return surface_vars, atmospheric_vars
 
 def collate_fn(batch):
     inp = torch.stack([batch[i][0] for i in range(len(batch))])

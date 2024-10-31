@@ -1,7 +1,7 @@
 """Copyright (c) Microsoft Corporation. Licensed under the MIT license."""
 
 from functools import partial
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union, List
 
 import torch
 
@@ -38,8 +38,8 @@ def normalise_atmos_var(
     unnormalise: bool = False,
 ) -> torch.Tensor:
     """Normalise an atmospheric variable."""
-    level_locations: list[Union[int, float]] = []
-    level_scales: list[Union[int, float]] = []
+    level_locations: List[Union[int, float]] = []
+    level_scales: List[Union[int, float]] = []
     for level in atmos_levels:
         level_locations.append(locations[f"{name}_{level}"])
         level_scales.append(scales[f"{name}_{level}"])
