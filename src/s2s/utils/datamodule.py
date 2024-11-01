@@ -39,8 +39,8 @@ class GlobalForecastDataModule(LightningDataModule):
         root_dir,
         in_variables,
         static_variables,
-        buffer_size=10000,
-        out_variables=None,
+        buffer_size = 10000,
+        out_variables = None,
         predict_range: int = 6,
         history_range: int = 1,
         hrs_each_step: int = 1,
@@ -57,14 +57,17 @@ class GlobalForecastDataModule(LightningDataModule):
 
         # this line allows to access init params with 'self.hparams' attribute
         self.save_hyperparameters(logger=False)
-
-        if isinstance(out_variables, str):
+        
+        if out_variables is None:
+            self.out_variables = in_variables #set output variables equal to input variables if not specified 
+        elif isinstance(out_variables, str):
             out_variables = [out_variables]
             self.out_variables = out_variables
-        
+        else:
+            self.out_variables = out_variables
+
         self.root_dir = root_dir
         self.in_variables = in_variables
-        self.out_variables = out_variables
         self.static_variables = static_variables
         self.buffer_size = buffer_size
         self.predict_range = predict_range
@@ -80,9 +83,12 @@ class GlobalForecastDataModule(LightningDataModule):
         self.lister_test = list(dp.iter.FileLister(os.path.join(self.root_dir, "test")))
         self.static_variable_file = os.path.join(self.root_dir, "static", "static.npz")
 
-        self.in_transforms = self.get_normalize(self.in_variables)
-        self.output_transforms = self.get_normalize(self.out_variables)
-        self.static_transforms = self.get_normalize(self.static_variables, "static")
+        in_mean, in_std = self.get_normalization_stats(self.in_variables)
+        out_mean, out_std = self.get_normalization_stats(self.out_variables)
+        static_mean, static_std = self.get_normalization_stats(self.static_variables, "static")
+        self.in_transforms = transforms.Normalize(in_mean,in_std)
+        self.output_transforms = transforms.Normalize(out_mean, out_std)
+        self.static_transforms = transforms.Normalize(static_mean, static_std)
 
         self.val_clim, self.val_clim_timestamps = self.get_climatology(self.out_variables, "val")
         self.test_clim, self.test_clim_timestamps = self.get_climatology(self.out_variables, "test")
@@ -91,12 +97,12 @@ class GlobalForecastDataModule(LightningDataModule):
         self.data_val: Optional[IterableDataset] = None
         self.data_test: Optional[IterableDataset] = None
         
-    def get_normalize(self, variables, partition = ""):
+    def get_normalization_stats(self, variables, partition = ""):
         normalize_mean = dict(np.load(os.path.join(self.root_dir, partition, "normalize_mean.npz")))
         normalize_mean = np.array([normalize_mean[var] for var in variables])
         normalize_std = dict(np.load(os.path.join(self.root_dir, partition, "normalize_std.npz")))
         normalize_std = np.array([normalize_std[var] for var in variables])
-        return transforms.Normalize(normalize_mean, normalize_std)
+        return normalize_mean, normalize_std
 
     def get_lat_lon(self):
         lat = np.load(os.path.join(self.root_dir, "lat.npy"))

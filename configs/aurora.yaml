@@ -1,0 +1,152 @@
+seed_everything: 42
+
+# ---------------------------- TRAINER -------------------------------------------
+trainer:
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/test
+
+  precision: 16
+
+  devices: 1
+  num_nodes: 1
+  accelerator: cpu
+  strategy: ddp
+
+  min_epochs: 1
+  max_epochs: 50
+  enable_progress_bar: true
+
+  sync_batchnorm: True
+  enable_checkpointing: True
+  resume_from_checkpoint: null
+
+  # debugging
+  fast_dev_run: false
+
+  logger:
+    class_path: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+    init_args:
+      save_dir: ${trainer.default_root_dir}/logs
+      name: null
+      version: null
+      log_graph: False
+      default_hp_metric: True
+      prefix: ""
+
+  callbacks:
+    - class_path: pytorch_lightning.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: "step"
+
+    - class_path: pytorch_lightning.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: "${trainer.default_root_dir}/checkpoints"
+        monitor: "val/w_rmse" # name of the logged metric which determines when model is improving
+        mode: "min" # "max" means higher metric value is better, can be also "min"
+        save_top_k: 1 # save k best models (determined by above metric)
+        save_last: True # additionaly always save model from last epoch
+        verbose: False
+        filename: "epoch_{epoch:03d}"
+        auto_insert_metric_name: False
+
+    - class_path: pytorch_lightning.callbacks.EarlyStopping
+      init_args:
+        monitor: "val/w_rmse" # name of the logged metric which determines when model is improving
+        mode: "min" # "max" means higher metric value is better, can be also "min"
+        patience: 5 # how many validation epochs of not improving until training stops
+        min_delta: 0. # minimum change in the monitored metric needed to qualify as an improvement
+
+    - class_path: pytorch_lightning.callbacks.RichModelSummary
+      init_args:
+        max_depth: -1
+
+    - class_path: pytorch_lightning.callbacks.RichProgressBar
+
+# ---------------------------- MODEL -------------------------------------------
+model:
+  pretrained_path: ""
+  version: 1
+  lr: 5e-7
+  beta_1: 0.9
+  beta_2: 0.999
+  weight_decay: 1e-5
+  warmup_epochs: 12500
+  max_epochs: 125000
+  warmup_start_lr: 1e-8
+  eta_min: 1e-8
+  img_size: [32, 64]
+  patch_size: 2
+  embed_dim: 1024
+  depth: 8
+  decoder_depth: 2
+  num_heads: 16
+  mlp_ratio: 4
+  drop_path: 0.1
+  drop_rate: 0.1
+  parallel_patch_embed: False
+
+
+# ---------------------------- DATA -------------------------------------------
+data:
+  root_dir: /glade/derecho/scratch/kvirji/1959-2023_01_10-6h-64x32_equiangular_conservative_preprocessed_n_shards_1
+  static_variables: [
+    "land_sea_mask",
+    "geopotential_at_surface",
+    "soil_type",
+    ]
+  in_variables: [
+      "2m_temperature",
+      "10m_u_component_of_wind",
+      "10m_v_component_of_wind",
+      "mean_sea_level_pressure",
+      "geopotential_50",
+      "geopotential_250",
+      "geopotential_500",
+      "geopotential_600",
+      "geopotential_700",
+      "geopotential_850",
+      "geopotential_925",
+      "u_component_of_wind_50",
+      "u_component_of_wind_250",
+      "u_component_of_wind_500",
+      "u_component_of_wind_600",
+      "u_component_of_wind_700",
+      "u_component_of_wind_850",
+      "u_component_of_wind_925",
+      "v_component_of_wind_50",
+      "v_component_of_wind_250",
+      "v_component_of_wind_500",
+      "v_component_of_wind_600",
+      "v_component_of_wind_700",
+      "v_component_of_wind_850",
+      "v_component_of_wind_925",
+      "temperature_50",
+      "temperature_250",
+      "temperature_500",
+      "temperature_600",
+      "temperature_700",
+      "temperature_850",
+      "temperature_925",
+      "relative_humidity_50",
+      "relative_humidity_250",
+      "relative_humidity_500",
+      "relative_humidity_600",
+      "relative_humidity_700",
+      "relative_humidity_850",
+      "relative_humidity_925",
+      "specific_humidity_50",
+      "specific_humidity_250",
+      "specific_humidity_500",
+      "specific_humidity_600",
+      "specific_humidity_700",
+      "specific_humidity_850",
+      "specific_humidity_925",
+    ]
+  # predict_range (steps) * hrs_each_step = lead_time (hrs)
+  predict_range: 4
+  hrs_each_step: 6
+  history_range: 1
+  buffer_size: 10000
+  batch_size: 32
+  num_workers: 0
+  pin_memory: False
+  normalize_data: False

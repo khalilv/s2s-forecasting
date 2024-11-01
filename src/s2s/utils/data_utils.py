@@ -27,6 +27,12 @@ NAME_TO_VAR = {
     "mean_sea_level_pressure": "msl",
 }
 
+AURORA_NAME_TO_VAR = NAME_TO_VAR.copy()
+AURORA_NAME_TO_VAR["2m_temperature"] = "2t"
+AURORA_NAME_TO_VAR["10m_u_component_of_wind"] = "10u"
+AURORA_NAME_TO_VAR["10m_v_component_of_wind"] = "10v"
+
+
 STATIC_VARS = [
     "land_sea_mask",
     "orography",
@@ -72,12 +78,16 @@ def split_surface_atmospheric(variables: list):
     for var in variables:
         if var in SURFACE_VARS:
             surface_vars.append(var)
-            continue
-            
-        atm_var = var[:-4]
-        if atm_var in ATMOSPHERIC_VARS and atm_var not in atmospheric_vars:
-            atmospheric_vars.append(atm_var)
-                
+        else:   
+            atm_var = '_'.join(var.split('_')[:-1])
+            pressure_level = var[-3:] if len(var.split('_')[-1]) == 3 else var[-2:]
+            assert pressure_level.isdigit(), f"Found invalid pressure level in {var}"
+            if atm_var in ATMOSPHERIC_VARS: 
+                if atm_var not in atmospheric_vars:
+                    atmospheric_vars.append(atm_var)
+            else:
+                raise ValueError(f"{var} could not be identified as a surface or atmospheric variable")                
+      
     return surface_vars, atmospheric_vars
 
 def collate_fn(batch):

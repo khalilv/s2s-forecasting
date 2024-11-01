@@ -4,10 +4,8 @@
 import os
 
 from s2s.utils.datamodule import GlobalForecastDataModule
-from s2s.climaX.module import GlobalForecastModule
+from s2s.aurora.module import GlobalForecastModule
 from pytorch_lightning.cli import LightningCLI
-
-# 1) entry point high-level class for training climaX. 
 
 def main():
     # Initialize Lightning with the model and data modules, and instruct it to parse the config yml
@@ -20,13 +18,11 @@ def main():
         parser_kwargs={"parser_mode": "omegaconf", "error_handler": None},
     )
     os.makedirs(cli.trainer.default_root_dir, exist_ok=True)
-
-    if cli.datamodule.normalize_data:
-        mean_norm, std_norm = cli.datamodule.get_normalization_stats(cli.datamodule.out_variables)
-        mean_denorm, std_denorm = -mean_norm / std_norm, 1 / std_norm   
-        cli.model.set_denormalization(mean_denorm, std_denorm)
+    assert cli.datamodule.normalize_data is False, "normalize_data must be false for Aurora. The model handles normalization internally."
+    assert cli.datamodule.in_variables == cli.datamodule.out_variables, "Input and output variables must be the same for Aurora"
+    cli.model.update_normalization_stats(cli.datamodule.in_variables, *cli.datamodule.get_normalization_stats(cli.datamodule.in_variables))
+    cli.model.update_normalization_stats(cli.datamodule.static_variables, *cli.datamodule.get_normalization_stats(cli.datamodule.static_variables, "static"))
     cli.model.set_lat_lon(*cli.datamodule.get_lat_lon())
-    cli.model.set_lat2d(cli.datamodule.normalize_data)
     cli.model.set_variables(cli.datamodule.in_variables, cli.datamodule.static_variables, cli.datamodule.out_variables)
     cli.model.set_val_clim(cli.datamodule.val_clim, cli.datamodule.val_clim_timestamps)
     cli.model.set_test_clim(cli.datamodule.test_clim, cli.datamodule.val_clim_timestamps)

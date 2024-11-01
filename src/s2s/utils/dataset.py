@@ -34,7 +34,7 @@ class NpyReader(IterableDataset):
         self.static_variable_file = static_variable_file
         self.in_variables = in_variables
         self.static_variables = static_variables
-        self.out_variables = out_variables if out_variables is not None else in_variables
+        self.out_variables = out_variables
         self.shuffle = shuffle
         self.multi_dataset_training = multi_dataset_training
         self.max_predict_range = max_predict_range

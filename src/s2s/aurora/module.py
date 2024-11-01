@@ -6,9 +6,9 @@ from typing import Any
 import numpy as np
 import torch
 from pytorch_lightning import LightningModule
-from torchvision.transforms import transforms
 
-from s2s.climaX.arch import ClimaX
+from s2s.aurora.model.aurora import Aurora, AuroraSmall, AuroraHighRes
+from s2s.aurora.batch import Batch
 from s2s.utils.lr_scheduler import LinearWarmupCosineAnnealingLR
 from s2s.utils.metrics import (
     lat_weighted_acc,
@@ -17,12 +17,11 @@ from s2s.utils.metrics import (
     lat_weighted_acc_spatial_map,
     lat_weighted_rmse_spatial_map
 )
-from s2s.climaX.pos_embed import interpolate_pos_embed
-from s2s.utils.data_utils import plot_spatial_map
+from s2s.utils.data_utils import plot_spatial_map, split_surface_atmospheric, AURORA_NAME_TO_VAR, SURFACE_VARS, ATMOSPHERIC_VARS, STATIC_VARS
 #3) Global forecast module - abstraction for training/validation/testing steps. setup for the module including hyperparameters is included here
 
 class GlobalForecastModule(LightningModule):
-    """Lightning module for global forecasting with the ClimaX model.
+    """Lightning module for global forecasting with the Aurora model.
 
     Args:
         pretrained_path (str, optional): Path to pre-trained checkpoint.
@@ -39,6 +38,7 @@ class GlobalForecastModule(LightningModule):
     def __init__(
         self,
         pretrained_path: str = "",
+        version: int = 0,
         lr: float = 5e-4,
         beta_1: float = 0.9,
         beta_2: float = 0.99,
@@ -60,6 +60,7 @@ class GlobalForecastModule(LightningModule):
     ):
         super().__init__()
         self.pretrained_path = pretrained_path
+        self.version = version
         self.lr = lr
         self.beta_1 = beta_1
         self.beta_2 = beta_2
@@ -78,84 +79,124 @@ class GlobalForecastModule(LightningModule):
         self.drop_path = drop_path
         self.drop_rate = drop_rate
         self.parallel_patch_embed = parallel_patch_embed
-        self.denormalization = None
+        self.surf_stats = {}
         self.save_hyperparameters(logger=False, ignore=["net"])      
 
-    def load_pretrained_weights(self, pretrained_path):
-        if pretrained_path.startswith("http"):
-            checkpoint = torch.hub.load_state_dict_from_url(pretrained_path, map_location=torch.device("cpu"))
-        else:
-            checkpoint = torch.load(pretrained_path, map_location=torch.device("cpu"))
-        print("Loading pre-trained checkpoint from: %s" % pretrained_path)
-        checkpoint_model = checkpoint["state_dict"]
-        # interpolate positional embedding
-        interpolate_pos_embed(self.net, checkpoint_model, new_size=self.net.img_size)
-
-        state_dict = self.state_dict()
-        if self.net.parallel_patch_embed:
-            if "token_embeds.proj_weights" not in checkpoint_model.keys():
-                raise ValueError(
-                    "Pretrained checkpoint does not have token_embeds.proj_weights for parallel processing. Please convert the checkpoints first or disable parallel patch_embed tokenization."
-                )
-
-        # checkpoint_keys = list(checkpoint_model.keys())
-        for k in list(checkpoint_model.keys()):
-            if "channel" in k:
-                checkpoint_model[k.replace("channel", "var")] = checkpoint_model[k]
-                del checkpoint_model[k]
-        for k in list(checkpoint_model.keys()):
-            if k not in state_dict.keys() or checkpoint_model[k].shape != state_dict[k].shape:
-                print(f"Removing key {k} from pretrained checkpoint")
-                del checkpoint_model[k]
-
-        # load pre-trained model
-        msg = self.load_state_dict(checkpoint_model, strict=False)
-        print(msg)
     
     def init_metrics(self):
         self.train_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat)
-        self.val_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, self.denormalization)
-        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, self.denormalization)
-        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.val_clim, self.val_clim_timestamps, self.denormalization)
-        self.test_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, self.denormalization)        
-        self.test_lat_weighted_rmse_spatial_map = lat_weighted_rmse_spatial_map(self.out_variables, self.lat, self.denormalization)
-        self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, self.denormalization)
-        self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.test_clim, self.test_clim_timestamps, self.denormalization)
-        self.test_lat_weighted_acc_spatial_map = lat_weighted_acc_spatial_map(self.out_variables, self.lat, self.test_clim, self.test_clim_timestamps, self.denormalization)
+        self.val_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, None)
+        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, None)
+        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.val_clim, self.val_clim_timestamps, None)
+        self.test_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, None)        
+        self.test_lat_weighted_rmse_spatial_map = lat_weighted_rmse_spatial_map(self.out_variables, self.lat, None)
+        self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, None)
+        self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.test_clim, self.test_clim_timestamps, None)
+        self.test_lat_weighted_acc_spatial_map = lat_weighted_acc_spatial_map(self.out_variables, self.lat, self.test_clim, self.test_clim_timestamps, None)
 
     def init_network(self):
-        variables = self.static_variables + ["lattitude"] + self.in_variables #climaX includes 2d latitude as an input field
-        self.net = ClimaX(in_vars=variables, 
-                          img_size=self.img_size, 
-                          patch_size=self.patch_size, 
-                          embed_dim=self.embed_dim, 
-                          depth=self.depth, 
-                          decoder_depth=self.decoder_depth, 
-                          num_heads=self.num_heads, 
-                          mlp_ratio=self.mlp_ratio, 
-                          drop_path=self.drop_path, 
-                          drop_rate=self.drop_rate, 
-                          parallel_patch_embed=self.parallel_patch_embed)
+        surf_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.in_surface_variables])
+        static_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.static_variables])
+        atmos_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.in_atmospheric_variables])
+        if self.version == 0:
+            self.net = Aurora(
+                surf_vars=surf_vars,
+                static_vars=static_vars,
+                atmos_vars=atmos_vars,
+                surf_stats=self.surf_stats
+            )
+        elif self.version == 1:
+            self.net = AuroraSmall(
+                surf_vars=surf_vars,
+                static_vars=static_vars,
+                atmos_vars=atmos_vars,
+                surf_stats=self.surf_stats
+            )
+        elif self.version == 2:
+            self.net = AuroraHighRes(
+                surf_vars=surf_vars,
+                static_vars=static_vars,
+                surf_stats=self.surf_stats
+            )
+        else:
+            raise ValueError(f"Invalid version number: {self.version}. Must be 0: Aurora, 1: AuroraSmall, or 2: AuroraHighRes.")
+        
         if len(self.pretrained_path) > 0:
             self.load_pretrained_weights(self.pretrained_path)
+    
+    def load_pretrained_weights(self, path):
+        self.net.load_checkpoint_local(path)
 
-    def set_denormalization(self, mean, std):
-        self.denormalization = transforms.Normalize(mean, std)
-      
+    def update_normalization_stats(self, variables, mean, std):
+        assert len(variables) == len(mean) and len(mean) == len(std)
+        for i,v in enumerate(variables):
+            if v in SURFACE_VARS:
+                self.surf_stats[AURORA_NAME_TO_VAR[v]] = (mean[i], std[i])
+            elif v in STATIC_VARS:
+                self.surf_stats[AURORA_NAME_TO_VAR[v]] = (mean[i], std[i])
+            else:
+                atm_var = '_'.join(v.split('_')[:-1])
+                pressure_level = v[-3:] if len(v.split('_')[-1]) == 3 else v[-2:]
+                assert pressure_level.isdigit(), f"Found invalid pressure level in {v}"
+                if atm_var in ATMOSPHERIC_VARS:
+                    self.surf_stats[f"{AURORA_NAME_TO_VAR[atm_var]}_{pressure_level}"] = (mean[i], std[i])
+                else:
+                    raise ValueError(f"{v} could not be identified as a surface, static, or atmospheric variable")                
+    
+    def create_aurora_batch(self, x, static, variables, static_variables, input_timestamps):
+        surf_vars = {}
+        atmos_vars = {}
+
+        atmos_data_per_var = {}
+        atmos_levels_per_var = {}
+
+        for i, v in enumerate(variables):
+            if v in SURFACE_VARS:
+                surf_vars[AURORA_NAME_TO_VAR[v]] = x[:,:,i,:,:]
+            else:
+                atm_var = '_'.join(v.split('_')[:-1])
+                pressure_level = v[-3:] if len(v.split('_')[-1]) == 3 else v[-2:]
+                assert pressure_level.isdigit(), f"Found invalid pressure level in {v}"
+                if atm_var in ATMOSPHERIC_VARS:
+                    if AURORA_NAME_TO_VAR[atm_var] not in atmos_data_per_var:
+                        atmos_data_per_var[AURORA_NAME_TO_VAR[atm_var]] = [(int(pressure_level), x[:,:,i,:,:])]
+                        atmos_levels_per_var[AURORA_NAME_TO_VAR[atm_var]] = [int(pressure_level)]
+                    else:
+                        atmos_data_per_var[AURORA_NAME_TO_VAR[atm_var]].append((int(pressure_level), x[:,:,i,:,:]))
+                        atmos_levels_per_var[AURORA_NAME_TO_VAR[atm_var]].append(int(pressure_level))
+                else:
+                    raise ValueError(f"{v} could not be identified as a surface or atmospheric variable")  
+        
+        #sort pressure levels for each variable 
+        for v in atmos_data_per_var.keys():
+            atmos_data_per_var[v].sort(key=lambda x: x[0])
+            atmos_levels_per_var[v].sort()
+
+        #assert all pressure levels are equal and ordered for all atmospheric variables
+        for v1 in atmos_levels_per_var.keys():
+            for v2 in atmos_levels_per_var.keys():
+                assert atmos_levels_per_var[v1] == atmos_levels_per_var[v2], f"Pressure levels don't match: {v1}: {atmos_levels_per_var[v1]}, {v2}: {atmos_levels_per_var[v2]}"
+        
+        atmos_levels = tuple(next(iter(atmos_levels_per_var.values()))) #get pressure levels from first key
+        
+        #stack pressure levels for each variable to form tensors of (B, T, C, H, W)
+        for v, data in atmos_data_per_var.items():
+            channel_list = [c for _, c in data]
+            atmos_vars[v] = torch.stack(channel_list, dim=2)
+        
+        print('here')
+
+
     def set_lat_lon(self, lat, lon):
         self.lat = lat
         self.lon = lon
-    
-    def set_lat2d(self, normalize: bool):
-        self.lat2d = torch.from_numpy(np.tile(self.lat, (self.img_size[1], 1)).T).unsqueeze(0) #climaX includes 2d latitude as an input field
-        if normalize:
-            normalization = transforms.Normalize(self.lat2d.mean(), self.lat2d.std())
-            self.lat2d = normalization(self.lat2d) #normalized lat2d with shape [1, H, W]
 
     def set_variables(self, in_variables: list, static_variables: list, out_variables: list):
         self.in_variables = in_variables
-        self.static_variables = static_variables
         self.out_variables = out_variables
+        self.static_variables = static_variables
+        self.in_surface_variables, self.in_atmospheric_variables = split_surface_atmospheric(in_variables)
+        self.out_surface_variables, self.out_atmospheric_variables = split_surface_atmospheric(out_variables)
 
     def set_val_clim(self, clim, timestamps):
         self.val_clim = clim
@@ -165,7 +206,6 @@ class GlobalForecastModule(LightningModule):
         self.test_clim = clim
         self.test_clim_timestamps = timestamps
     
-
     def training_step(self, batch: Any, batch_idx: int):
         x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch #spread batch data 
         
@@ -202,21 +242,9 @@ class GlobalForecastModule(LightningModule):
     def validation_step(self, batch: Any, batch_idx: int):
         x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
         
-        #append 2d latitude to static variables
-        lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
-        static = torch.cat((static,lat2d_expanded), dim=1)
-
-        #prepend static variables to input variables
-        static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
-        inputs = torch.cat((static, x), dim=2).to(torch.float32)
-
-        in_variables = static_variables + ["lattitude"] + variables
-
-        if inputs.shape[1] > 1:
-            raise NotImplementedError("history_range > 1 is not supported yet.")
-        inputs = inputs.squeeze() #squeeze history dimension
-
-        preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
+        aurora_batch = self.create_aurora_batch(x, static, variables, static_variables, input_timestamps)
+        
+        preds = self.net.forward(batch)
         
         #cast to float
         preds = preds.float()
