@@ -6,7 +6,6 @@ from typing import Optional
 import glob 
 import numpy as np
 import torch
-import torchdata.datapipes as dp
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, IterableDataset
 from torchvision.transforms import transforms
@@ -78,9 +77,9 @@ class GlobalForecastDataModule(LightningDataModule):
         self.pin_memory = pin_memory
         self.normalize_data = normalize_data
 
-        self.lister_train = list(dp.iter.FileLister(os.path.join(self.root_dir, "train")))
-        self.lister_val = list(dp.iter.FileLister(os.path.join(self.root_dir, "val")))
-        self.lister_test = list(dp.iter.FileLister(os.path.join(self.root_dir, "test")))
+        self.lister_train = glob.glob(os.path.join(self.root_dir, "train", "*"))
+        self.lister_val = glob.glob(os.path.join(self.root_dir, "val", "*"))
+        self.lister_test = glob.glob(os.path.join(self.root_dir, "test", "*"))
         self.static_variable_file = os.path.join(self.root_dir, "static", "static.npz")
 
         in_mean, in_std = self.get_normalization_stats(self.in_variables)

@@ -3,12 +3,13 @@
 
 # credits: https://github.com/ashleve/lightning-hydra-template/blob/main/src/models/mnist_module.py
 from typing import Any
+from datetime import datetime
 import numpy as np
 import torch
 from pytorch_lightning import LightningModule
 
 from s2s.aurora.model.aurora import Aurora, AuroraSmall, AuroraHighRes
-from s2s.aurora.batch import Batch
+from s2s.aurora.batch import Batch, Metadata
 from s2s.utils.lr_scheduler import LinearWarmupCosineAnnealingLR
 from s2s.utils.metrics import (
     lat_weighted_acc,
@@ -80,6 +81,7 @@ class GlobalForecastModule(LightningModule):
         self.drop_rate = drop_rate
         self.parallel_patch_embed = parallel_patch_embed
         self.surf_stats = {}
+        self.atmos_stats = {}
         self.save_hyperparameters(logger=False, ignore=["net"])      
 
     
@@ -103,20 +105,23 @@ class GlobalForecastModule(LightningModule):
                 surf_vars=surf_vars,
                 static_vars=static_vars,
                 atmos_vars=atmos_vars,
-                surf_stats=self.surf_stats
+                surf_stats=self.surf_stats,
+                atmos_stats=self.atmos_stats
             )
         elif self.version == 1:
             self.net = AuroraSmall(
                 surf_vars=surf_vars,
                 static_vars=static_vars,
                 atmos_vars=atmos_vars,
-                surf_stats=self.surf_stats
+                surf_stats=self.surf_stats,
+                atmos_stats=self.atmos_stats
             )
         elif self.version == 2:
             self.net = AuroraHighRes(
                 surf_vars=surf_vars,
                 static_vars=static_vars,
-                surf_stats=self.surf_stats
+                surf_stats=self.surf_stats,
+                atmos_stats=self.atmos_stats
             )
         else:
             raise ValueError(f"Invalid version number: {self.version}. Must be 0: Aurora, 1: AuroraSmall, or 2: AuroraHighRes.")
@@ -139,52 +144,68 @@ class GlobalForecastModule(LightningModule):
                 pressure_level = v[-3:] if len(v.split('_')[-1]) == 3 else v[-2:]
                 assert pressure_level.isdigit(), f"Found invalid pressure level in {v}"
                 if atm_var in ATMOSPHERIC_VARS:
-                    self.surf_stats[f"{AURORA_NAME_TO_VAR[atm_var]}_{pressure_level}"] = (mean[i], std[i])
+                    self.atmos_stats[f"{AURORA_NAME_TO_VAR[atm_var]}_{pressure_level}"] = (mean[i], std[i])
                 else:
                     raise ValueError(f"{v} could not be identified as a surface, static, or atmospheric variable")                
     
     def create_aurora_batch(self, x, static, variables, static_variables, input_timestamps):
         surf_vars = {}
         atmos_vars = {}
-
-        atmos_data_per_var = {}
-        atmos_levels_per_var = {}
-
+        static_vars = {}
+        atmos_data = {}
+        atmos_levels = {}
+        
+        #split surface and atmospheric data
         for i, v in enumerate(variables):
             if v in SURFACE_VARS:
-                surf_vars[AURORA_NAME_TO_VAR[v]] = x[:,:,i,:,:]
+                surf_vars[AURORA_NAME_TO_VAR[v]] = torch.flip(x[:,:,i,:,:], dims=[-2])
             else:
                 atm_var = '_'.join(v.split('_')[:-1])
                 pressure_level = v[-3:] if len(v.split('_')[-1]) == 3 else v[-2:]
                 assert pressure_level.isdigit(), f"Found invalid pressure level in {v}"
                 if atm_var in ATMOSPHERIC_VARS:
-                    if AURORA_NAME_TO_VAR[atm_var] not in atmos_data_per_var:
-                        atmos_data_per_var[AURORA_NAME_TO_VAR[atm_var]] = [(int(pressure_level), x[:,:,i,:,:])]
-                        atmos_levels_per_var[AURORA_NAME_TO_VAR[atm_var]] = [int(pressure_level)]
+                    if AURORA_NAME_TO_VAR[atm_var] not in atmos_data:
+                        atmos_data[AURORA_NAME_TO_VAR[atm_var]] = [(int(pressure_level), torch.flip(x[:,:,i,:,:], dims=[-2]))]
+                        atmos_levels[AURORA_NAME_TO_VAR[atm_var]] = [int(pressure_level)]
                     else:
-                        atmos_data_per_var[AURORA_NAME_TO_VAR[atm_var]].append((int(pressure_level), x[:,:,i,:,:]))
-                        atmos_levels_per_var[AURORA_NAME_TO_VAR[atm_var]].append(int(pressure_level))
+                        atmos_data[AURORA_NAME_TO_VAR[atm_var]].append((int(pressure_level), torch.flip(x[:,:,i,:,:], dims=[-2])))
+                        atmos_levels[AURORA_NAME_TO_VAR[atm_var]].append(int(pressure_level))
                 else:
                     raise ValueError(f"{v} could not be identified as a surface or atmospheric variable")  
         
         #sort pressure levels for each variable 
-        for v in atmos_data_per_var.keys():
-            atmos_data_per_var[v].sort(key=lambda x: x[0])
-            atmos_levels_per_var[v].sort()
+        for v in atmos_data.keys():
+            atmos_data[v].sort(key=lambda x: x[0])
+            atmos_levels[v].sort()
 
         #assert all pressure levels are equal and ordered for all atmospheric variables
-        for v1 in atmos_levels_per_var.keys():
-            for v2 in atmos_levels_per_var.keys():
-                assert atmos_levels_per_var[v1] == atmos_levels_per_var[v2], f"Pressure levels don't match: {v1}: {atmos_levels_per_var[v1]}, {v2}: {atmos_levels_per_var[v2]}"
+        for v1 in atmos_levels.keys():
+            for v2 in atmos_levels.keys():
+                assert atmos_levels[v1] == atmos_levels[v2], f"Pressure levels don't match: {v1}: {atmos_levels[v1]}, {v2}: {atmos_levels[v2]}"
         
-        atmos_levels = tuple(next(iter(atmos_levels_per_var.values()))) #get pressure levels from first key
+        atmos_levels = tuple(next(iter(atmos_levels.values()))) #get pressure levels from first key
         
-        #stack pressure levels for each variable to form tensors of (B, T, C, H, W)
-        for v, data in atmos_data_per_var.items():
+        #stack pressure levels for each atmospheric variable to form tensors of (B, T, C, H, W)
+        for v, data in atmos_data.items():
             channel_list = [c for _, c in data]
             atmos_vars[v] = torch.stack(channel_list, dim=2)
         
-        print('here')
+        #format static variables
+        for i, v in enumerate(static_variables):
+            if v in STATIC_VARS:
+                static_vars[AURORA_NAME_TO_VAR[v]] = torch.flip(static[0,i,:,:], dims=[-2])
+        
+        return Batch(
+            surf_vars=surf_vars,
+            static_vars=static_vars,
+            atmos_vars=atmos_vars,
+            metadata=Metadata(
+                lat=torch.from_numpy(self.lat).flip(dims=[0]),
+                lon=torch.from_numpy(self.lon),
+                time=tuple([datetime.fromisoformat(ts[-1]) for ts in input_timestamps]),
+                atmos_levels=atmos_levels,
+            )
+        )
 
 
     def set_lat_lon(self, lat, lon):
@@ -209,21 +230,11 @@ class GlobalForecastModule(LightningModule):
     def training_step(self, batch: Any, batch_idx: int):
         x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch #spread batch data 
         
-        #append 2d latitude to static variables
-        lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
-        static = torch.cat((static,lat2d_expanded), dim=1)
+        input_batch = self.create_aurora_batch(x, static, variables, static_variables, input_timestamps)
+        
+        output_batch = self.net.forward(input_batch) #stopped here
 
-        #prepend static variables to input variables
-        static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
-        inputs = torch.cat((static, x), dim=2).to(torch.float32)
-
-        in_variables = static_variables + ["lattitude"] + variables
-
-        if inputs.shape[1] > 1:
-            raise NotImplementedError("history_range > 1 is not supported yet.")
-        inputs = inputs.squeeze() #squeeze history dimension
-   
-        preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
+        #reconstruct data for metrics
         
         #cast to float
         preds = preds.float()
@@ -242,9 +253,11 @@ class GlobalForecastModule(LightningModule):
     def validation_step(self, batch: Any, batch_idx: int):
         x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
         
-        aurora_batch = self.create_aurora_batch(x, static, variables, static_variables, input_timestamps)
+        input_batch = self.create_aurora_batch(x, static, variables, static_variables, input_timestamps)
         
-        preds = self.net.forward(batch)
+        output_batch = self.net.forward(input_batch) #stopped here
+
+        #reconstruct data for metrics
         
         #cast to float
         preds = preds.float()
@@ -275,21 +288,11 @@ class GlobalForecastModule(LightningModule):
     def test_step(self, batch: Any, batch_idx: int):
         x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
 
-        #append 2d latitude to static variables
-        lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
-        static = torch.cat((static,lat2d_expanded), dim=1)
+        input_batch = self.create_aurora_batch(x, static, variables, static_variables, input_timestamps)
+        
+        output_batch = self.net.forward(input_batch) #stopped here
 
-        #prepend static variables to input variables
-        static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
-        inputs = torch.cat((static, x), dim=2).to(torch.float32)
-
-        in_variables = static_variables + ["lattitude"] + variables
-
-        if inputs.shape[1] > 1:
-            raise NotImplementedError("history_range > 1 is not supported yet.")
-        inputs = inputs.squeeze() #squeeze history dimension
-
-        preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
+        #reconstruct data for metrics
 
         #cast to float
         preds = preds.float()

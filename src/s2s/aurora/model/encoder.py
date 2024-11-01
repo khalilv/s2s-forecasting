@@ -155,6 +155,7 @@ class Perceiver3DEncoder(nn.Module):
         latents = torch.einsum("bcld->blcd", latents)
         latents = latents.flatten(0, 1)  # (B * L, C_A, D)
 
+        self.level_agg.to(dtype=x.dtype)
         x = self.level_agg(latents, x)  # (B * L, C, D)
         x = x.unflatten(dim=0, sizes=(B, L))  # (B, L, C, D)
         x = torch.einsum("blcd->bcld", x)  # (B, C, L, D)
@@ -170,14 +171,14 @@ class Perceiver3DEncoder(nn.Module):
         Returns:
             torch.Tensor: Encoding of shape `(B, L, D)`.
         """
-        surf_vars = Tuple(batch.surf_vars.keys())
-        static_vars = Tuple(batch.static_vars.keys())
-        atmos_vars = Tuple(batch.atmos_vars.keys())
+        surf_vars = tuple(batch.surf_vars.keys())
+        static_vars = tuple(batch.static_vars.keys())
+        atmos_vars = tuple(batch.atmos_vars.keys())
         atmos_levels = batch.metadata.atmos_levels
 
-        x_surf = torch.stack(Tuple(batch.surf_vars.values()), dim=2)
-        x_static = torch.stack(Tuple(batch.static_vars.values()), dim=2)
-        x_atmos = torch.stack(Tuple(batch.atmos_vars.values()), dim=2)
+        x_surf = torch.stack(tuple(batch.surf_vars.values()), dim=2)
+        x_static = torch.stack(tuple(batch.static_vars.values()), dim=2)
+        x_atmos = torch.stack(tuple(batch.atmos_vars.values()), dim=2)
 
         B, T, _, C, H, W = x_atmos.size()
         assert x_surf.shape[:2] == (B, T), f"Expected shape {(B, T)}, got {x_surf.shape[:2]}."
@@ -209,6 +210,8 @@ class Perceiver3DEncoder(nn.Module):
         # atmospheric levels.
         x_surf = x_surf + self.surf_level_encoding[None, None, :].to(dtype=dtype)
         # Since the surface level is not aggregated, we add a Perceiver-like MLP only.
+        self.surf_norm.to(dtype=dtype)
+        self.surf_mlp.to(dtype=dtype)
         x_surf = x_surf + self.surf_norm(self.surf_mlp(x_surf))
 
         # Add atmospheric pressure encoding of shape (C_A, D) and subsequent embedding.

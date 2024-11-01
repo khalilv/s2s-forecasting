@@ -124,8 +124,8 @@ class Perceiver3DDecoder(nn.Module):
         Returns:
             :class:`aurora.batch.Batch`: Prediction for `batch`.
         """
-        surf_vars = Tuple(batch.surf_vars.keys())
-        atmos_vars = Tuple(batch.atmos_vars.keys())
+        surf_vars = tuple(batch.surf_vars.keys())
+        atmos_vars = tuple(batch.atmos_vars.keys())
         atmos_levels = batch.metadata.atmos_levels
 
         # Compress the latent dimension from the U-net skip concatenation.
@@ -174,7 +174,7 @@ class Perceiver3DDecoder(nn.Module):
             Metadata(
                 lat=lat,
                 lon=lon,
-                time=Tuple(t + lead_time for t in batch.metadata.time),
+                time=tuple(t + lead_time for t in batch.metadata.time),
                 atmos_levels=atmos_levels,
                 rollout_step=batch.metadata.rollout_step + 1,
             ),

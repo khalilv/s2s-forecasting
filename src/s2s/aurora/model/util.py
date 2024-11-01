@@ -1,7 +1,7 @@
 """Copyright (c) Microsoft Corporation. Licensed under the MIT license."""
 
 from typing import TypeVar, Tuple
-
+import math
 import torch
 from einops import rearrange
 from timm.models.vision_transformer import trunc_normal_
@@ -62,8 +62,8 @@ def maybe_adjust_windows(window_size: T, shift_size: T, res: T) -> Tuple[T, T]:
             mut_shift_size[i] = 0
             mut_window_size[i] = res[i]
 
-    new_window_size: T = Tuple(mut_window_size)  # type: ignore[assignment]
-    new_shift_size: T = Tuple(mut_shift_size)  # type: ignore[assignment]
+    new_window_size: T = tuple(mut_window_size)  # type: ignore[assignment]
+    new_shift_size: T = tuple(mut_shift_size)  # type: ignore[assignment]
 
     assert min(new_window_size) > 0, f"Window size must be positive. Found {new_window_size}."
     assert min(new_shift_size) >= 0, f"Shift size must be non-negative. Found {new_shift_size}."

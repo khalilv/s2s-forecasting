@@ -35,14 +35,21 @@ def normalise_atmos_var(
     x: torch.Tensor,
     name: str,
     atmos_levels: Tuple[Union[int, float], ...],
+    stats: Optional[Dict[str, Tuple[float, float]]] = None,
     unnormalise: bool = False,
 ) -> torch.Tensor:
     """Normalise an atmospheric variable."""
     level_locations: List[Union[int, float]] = []
     level_scales: List[Union[int, float]] = []
     for level in atmos_levels:
-        level_locations.append(locations[f"{name}_{level}"])
-        level_scales.append(scales[f"{name}_{level}"])
+        atm_name = f"{name}_{level}"
+        if stats and atm_name in stats:
+            l, s = stats[atm_name]
+        else:
+            l = locations[atm_name]
+            s = scales[atm_name]
+        level_locations.append(l)
+        level_scales.append(s)
     location = torch.tensor(level_locations, dtype=x.dtype, device=x.device)
     scale = torch.tensor(level_scales, dtype=x.dtype, device=x.device)
 

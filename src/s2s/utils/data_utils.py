@@ -27,6 +27,7 @@ NAME_TO_VAR = {
     "mean_sea_level_pressure": "msl",
 }
 
+#Aurora and WB2 use different short_names for some surface variables
 AURORA_NAME_TO_VAR = NAME_TO_VAR.copy()
 AURORA_NAME_TO_VAR["2m_temperature"] = "2t"
 AURORA_NAME_TO_VAR["10m_u_component_of_wind"] = "10u"

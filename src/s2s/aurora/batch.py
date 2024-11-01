@@ -89,12 +89,15 @@ class Batch:
         """Get the spatial shape from an arbitrary surface-level variable."""
         return next(iter(self.surf_vars.values())).shape[-2:]
 
-    def normalise(self, surf_stats: Dict[str, Tuple[float, float]]) -> "Batch":
+    def normalise(self, surf_stats: Dict[str, Tuple[float, float]], atmos_stats: Dict[str, Tuple[float, float]]) -> "Batch":
         """Normalise all variables in the batch.
 
         Args:
             surf_stats (dict[str, Tuple[float, float]]): For these surface-level variables, adjust
                 the normalisation to the given tuple consisting of a new location and scale.
+            atmos_stats (dict[str, Tuple[float, float]]): For these atmospheric variables, adjust
+                the normalisation to the given tuple consisting of a new location and scale.
+
 
         Returns:
             :class:`.Batch`: Normalised batch.
@@ -107,17 +110,19 @@ class Batch:
                 k: normalise_surf_var(v, k, stats=surf_stats) for k, v in self.static_vars.items()
             },
             atmos_vars={
-                k: normalise_atmos_var(v, k, self.metadata.atmos_levels)
+                k: normalise_atmos_var(v, k, atmos_levels=self.metadata.atmos_levels, stats=atmos_stats)
                 for k, v in self.atmos_vars.items()
             },
             metadata=self.metadata,
         )
 
-    def unnormalise(self, surf_stats: Dict[str, Tuple[float, float]]) -> "Batch":
+    def unnormalise(self, surf_stats: Dict[str, Tuple[float, float]], atmos_stats: Dict[str, Tuple[float, float]]) -> "Batch":
         """Unnormalise all variables in the batch.
 
         Args:
             surf_stats (dict[str, Tuple[float, float]]): For these surface-level variables, adjust
+                the normalisation to the given tuple consisting of a new location and scale.
+            atmos_stats (dict[str, Tuple[float, float]]): For these atmospheric variables, adjust
                 the normalisation to the given tuple consisting of a new location and scale.
 
         Returns:
@@ -131,7 +136,7 @@ class Batch:
                 k: unnormalise_surf_var(v, k, stats=surf_stats) for k, v in self.static_vars.items()
             },
             atmos_vars={
-                k: unnormalise_atmos_var(v, k, self.metadata.atmos_levels)
+                k: unnormalise_atmos_var(v, k, atmos_levels=self.metadata.atmos_levels, stats=atmos_stats)
                 for k, v in self.atmos_vars.items()
             },
             metadata=self.metadata,
