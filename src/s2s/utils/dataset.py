@@ -121,8 +121,8 @@ class Forecast(IterableDataset):
                 predict_ranges = torch.randint(low=1, high=max_predict_range, size=(inputs.shape[0],))
             else:
                 predict_ranges = torch.ones(inputs.shape[0]).to(torch.long) * max_predict_range
-            lead_times = hrs_each_step * predict_ranges / 100
-            lead_times = lead_times.to(inputs.dtype)
+            lead_times = hrs_each_step * predict_ranges 
+            lead_times = lead_times.to(inputs.dtype) #hours
             output_ids = torch.arange(inputs.shape[0]) + predict_ranges + history_range - 1
             outputs = y[output_ids]
             output_timestamps = timestamps[output_ids]

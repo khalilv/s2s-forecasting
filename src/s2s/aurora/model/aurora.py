@@ -183,7 +183,7 @@ class Aurora(torch.nn.Module):
             perceiver_ln_eps=perceiver_ln_eps,
         )
 
-    def forward(self, batch: Batch) -> Batch:
+    def forward(self, batch: Batch, lead_time: timedelta) -> Batch:
         """Forward pass.
 
         Args:
@@ -215,19 +215,19 @@ class Aurora(torch.nn.Module):
 
         x = self.encoder(
             batch,
-            lead_time=timedelta(hours=6),
+            lead_time=lead_time,
         )
         with torch.autocast(device_type="cuda") if self.autocast else contextlib.nullcontext():
             x = self.backbone(
                 x,
-                lead_time=timedelta(hours=6),
+                lead_time=lead_time,
                 patch_res=patch_res,
                 rollout_step=batch.metadata.rollout_step,
             )
         pred = self.decoder(
             x,
             batch,
-            lead_time=timedelta(hours=6),
+            lead_time=lead_time,
             patch_res=patch_res,
         )
 

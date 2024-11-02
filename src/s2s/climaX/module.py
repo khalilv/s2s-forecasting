@@ -183,11 +183,13 @@ class GlobalForecastModule(LightningModule):
             raise NotImplementedError("history_range > 1 is not supported yet.")
         inputs = inputs.squeeze() #squeeze history dimension
    
+        #divide lead_times by 100 following climaX
+        lead_times = lead_times / 100
+
         preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
         
-        #cast to float
-        preds = preds.float()
-        y = y.float()
+        #ensure y is the same dtype as preds
+        y = y.to(dtype=preds.dtype)
         
         batch_loss = self.train_lat_weighted_mse(preds, y)
         for var in batch_loss.keys():
@@ -216,11 +218,13 @@ class GlobalForecastModule(LightningModule):
             raise NotImplementedError("history_range > 1 is not supported yet.")
         inputs = inputs.squeeze() #squeeze history dimension
 
+        #divide lead_times by 100 following climaX
+        lead_times = lead_times / 100
+
         preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
         
-        #cast to float
-        preds = preds.float()
-        y = y.float()
+        #ensure y is the same dtype as preds
+        y = y.to(dtype=preds.dtype)
 
         self.val_lat_weighted_mse.update(preds, y)
         self.val_lat_weighted_rmse.update(preds, y)
@@ -261,11 +265,13 @@ class GlobalForecastModule(LightningModule):
             raise NotImplementedError("history_range > 1 is not supported yet.")
         inputs = inputs.squeeze() #squeeze history dimension
 
+        #divide lead_times by 100 following climaX
+        lead_times = lead_times / 100
+
         preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
 
-        #cast to float
-        preds = preds.float()
-        y = y.float()
+        #ensure y is the same dtype as preds
+        y = y.to(dtype=preds.dtype)
         
         self.test_lat_weighted_mse.update(preds, y)
         self.test_lat_weighted_rmse.update(preds, y)

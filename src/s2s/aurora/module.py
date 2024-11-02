@@ -3,7 +3,7 @@
 
 # credits: https://github.com/ashleve/lightning-hydra-template/blob/main/src/models/mnist_module.py
 from typing import Any
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 import torch
 from pytorch_lightning import LightningModule
@@ -48,7 +48,6 @@ class GlobalForecastModule(LightningModule):
         max_epochs: int = 200000,
         warmup_start_lr: float = 1e-8,
         eta_min: float = 1e-8,
-        img_size: list = [32, 64],
         patch_size: int = 16,
         embed_dim: int = 64,
         depth: int = 8,
@@ -70,7 +69,6 @@ class GlobalForecastModule(LightningModule):
         self.max_epochs = max_epochs
         self.warmup_start_lr = warmup_start_lr
         self.eta_min = eta_min
-        self.img_size = img_size
         self.patch_size = patch_size
         self.embed_dim = embed_dim
         self.depth = depth
@@ -106,7 +104,7 @@ class GlobalForecastModule(LightningModule):
                 static_vars=static_vars,
                 atmos_vars=atmos_vars,
                 surf_stats=self.surf_stats,
-                atmos_stats=self.atmos_stats
+                atmos_stats=self.atmos_stats,
             )
         elif self.version == 1:
             self.net = AuroraSmall(
@@ -141,14 +139,14 @@ class GlobalForecastModule(LightningModule):
                 self.surf_stats[AURORA_NAME_TO_VAR[v]] = (mean[i], std[i])
             else:
                 atm_var = '_'.join(v.split('_')[:-1])
-                pressure_level = v[-3:] if len(v.split('_')[-1]) == 3 else v[-2:]
+                pressure_level = v.split('_')[-1]
                 assert pressure_level.isdigit(), f"Found invalid pressure level in {v}"
                 if atm_var in ATMOSPHERIC_VARS:
                     self.atmos_stats[f"{AURORA_NAME_TO_VAR[atm_var]}_{pressure_level}"] = (mean[i], std[i])
                 else:
                     raise ValueError(f"{v} could not be identified as a surface, static, or atmospheric variable")                
     
-    def create_aurora_batch(self, x, static, variables, static_variables, input_timestamps):
+    def construct_aurora_batch(self, x, static, variables, static_variables, input_timestamps):
         surf_vars = {}
         atmos_vars = {}
         static_vars = {}
@@ -161,7 +159,7 @@ class GlobalForecastModule(LightningModule):
                 surf_vars[AURORA_NAME_TO_VAR[v]] = torch.flip(x[:,:,i,:,:], dims=[-2])
             else:
                 atm_var = '_'.join(v.split('_')[:-1])
-                pressure_level = v[-3:] if len(v.split('_')[-1]) == 3 else v[-2:]
+                pressure_level = v.split('_')[-1]
                 assert pressure_level.isdigit(), f"Found invalid pressure level in {v}"
                 if atm_var in ATMOSPHERIC_VARS:
                     if AURORA_NAME_TO_VAR[atm_var] not in atmos_data:
@@ -207,6 +205,25 @@ class GlobalForecastModule(LightningModule):
             )
         )
 
+    def deconstruct_aurora_batch(self, batch: Batch, variables):
+        preds = []
+        timestamps = [dt.strftime('%Y-%m-%dT%H:%M') for dt in batch.metadata.time]
+        for v in variables:
+            if v in SURFACE_VARS:
+                surf_data = batch.surf_vars[AURORA_NAME_TO_VAR[v]][:,0,:,:]
+                preds.append(surf_data)
+            else: 
+                atm_var = '_'.join(v.split('_')[:-1])
+                pressure_level = v.split('_')[-1]
+                assert pressure_level.isdigit(), f"Found invalid pressure level in {v}"
+                if atm_var in ATMOSPHERIC_VARS:
+                    atm_data = batch.atmos_vars[AURORA_NAME_TO_VAR[atm_var]][:,0,batch.metadata.atmos_levels.index(int(pressure_level)),:,:]
+                    preds.append(atm_data)
+                else:
+                    raise ValueError(f"{v} could not be identified as a surface or atmospheric variable")  
+        preds = torch.stack(preds, dim=1)
+        return preds, timestamps
+
 
     def set_lat_lon(self, lat, lon):
         self.lat = lat
@@ -230,15 +247,17 @@ class GlobalForecastModule(LightningModule):
     def training_step(self, batch: Any, batch_idx: int):
         x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch #spread batch data 
         
-        input_batch = self.create_aurora_batch(x, static, variables, static_variables, input_timestamps)
-        
-        output_batch = self.net.forward(input_batch) #stopped here
+        if not torch.all(lead_times == lead_times[0]):
+            raise NotImplementedError("Variable lead times not implemented yet.")
 
-        #reconstruct data for metrics
+        input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
+        output_batch = self.net.forward(input_batch, timedelta(hours=int(lead_times[0])))
+        preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)
         
-        #cast to float
-        preds = preds.float()
-        y = y.float()
+        assert pred_timestamps == output_timestamps #these should always be equal
+
+        #ensure y is the same dtype as preds
+        y = y.to(dtype=preds.dtype)
         
         batch_loss = self.train_lat_weighted_mse(preds, y)
         for var in batch_loss.keys():
@@ -253,15 +272,17 @@ class GlobalForecastModule(LightningModule):
     def validation_step(self, batch: Any, batch_idx: int):
         x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
         
-        input_batch = self.create_aurora_batch(x, static, variables, static_variables, input_timestamps)
+        if not torch.all(lead_times == lead_times[0]):
+            raise NotImplementedError("Variable lead times not implemented yet.")
         
-        output_batch = self.net.forward(input_batch) #stopped here
+        input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
+        output_batch = self.net.forward(input_batch, timedelta(hours=int(lead_times[0])))
+        preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
+        
+        assert pred_timestamps == output_timestamps #these should always be equal
 
-        #reconstruct data for metrics
-        
-        #cast to float
-        preds = preds.float()
-        y = y.float()
+        #ensure y is the same dtype as preds
+        y = y.to(dtype=preds.dtype)
 
         self.val_lat_weighted_mse.update(preds, y)
         self.val_lat_weighted_rmse.update(preds, y)
@@ -287,16 +308,18 @@ class GlobalForecastModule(LightningModule):
 
     def test_step(self, batch: Any, batch_idx: int):
         x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
-
-        input_batch = self.create_aurora_batch(x, static, variables, static_variables, input_timestamps)
         
-        output_batch = self.net.forward(input_batch) #stopped here
-
-        #reconstruct data for metrics
-
-        #cast to float
-        preds = preds.float()
-        y = y.float()
+        if not torch.all(lead_times == lead_times[0]):
+            raise NotImplementedError("Variable lead times not implemented yet.")
+        
+        input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
+        output_batch = self.net.forward(input_batch, timedelta(hours=int(lead_times[0])))
+        preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
+        
+        assert pred_timestamps == output_timestamps #these should always be equal        
+        
+        #ensure y is the same dtype as preds
+        y = y.to(dtype=preds.dtype)
         
         self.test_lat_weighted_mse.update(preds, y)
         self.test_lat_weighted_rmse.update(preds, y)

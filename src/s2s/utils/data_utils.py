@@ -81,7 +81,7 @@ def split_surface_atmospheric(variables: list):
             surface_vars.append(var)
         else:   
             atm_var = '_'.join(var.split('_')[:-1])
-            pressure_level = var[-3:] if len(var.split('_')[-1]) == 3 else var[-2:]
+            pressure_level = var.split('_')[-1]
             assert pressure_level.isdigit(), f"Found invalid pressure level in {var}"
             if atm_var in ATMOSPHERIC_VARS: 
                 if atm_var not in atmospheric_vars:
