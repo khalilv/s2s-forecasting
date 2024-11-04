@@ -3,13 +3,13 @@
 
 # credits: https://github.com/ashleve/lightning-hydra-template/blob/main/src/models/mnist_module.py
 from typing import Any
-from datetime import datetime, timedelta
-import numpy as np
+from datetime import datetime
 import torch
 from pytorch_lightning import LightningModule
 
 from s2s.aurora.model.aurora import Aurora, AuroraSmall, AuroraHighRes
 from s2s.aurora.batch import Batch, Metadata
+from s2s.aurora.rollout import rollout
 from s2s.utils.lr_scheduler import LinearWarmupCosineAnnealingLR
 from s2s.utils.metrics import (
     lat_weighted_acc,
@@ -80,6 +80,7 @@ class GlobalForecastModule(LightningModule):
         self.parallel_patch_embed = parallel_patch_embed
         self.surf_stats = {}
         self.atmos_stats = {}
+        self.delta_time = None
         self.save_hyperparameters(logger=False, ignore=["net"])      
 
     
@@ -95,6 +96,7 @@ class GlobalForecastModule(LightningModule):
         self.test_lat_weighted_acc_spatial_map = lat_weighted_acc_spatial_map(self.out_variables, self.lat, self.test_clim, self.test_clim_timestamps, None)
 
     def init_network(self):
+        assert self.delta_time is not None, 'delta_time hyperparameter must be set before initializing model'
         surf_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.in_surface_variables])
         static_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.static_variables])
         atmos_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.in_atmospheric_variables])
@@ -105,6 +107,7 @@ class GlobalForecastModule(LightningModule):
                 atmos_vars=atmos_vars,
                 surf_stats=self.surf_stats,
                 atmos_stats=self.atmos_stats,
+                delta_time=self.delta_time
             )
         elif self.version == 1:
             self.net = AuroraSmall(
@@ -112,14 +115,17 @@ class GlobalForecastModule(LightningModule):
                 static_vars=static_vars,
                 atmos_vars=atmos_vars,
                 surf_stats=self.surf_stats,
-                atmos_stats=self.atmos_stats
+                atmos_stats=self.atmos_stats,
+                delta_time=self.delta_time
+
             )
         elif self.version == 2:
             self.net = AuroraHighRes(
                 surf_vars=surf_vars,
                 static_vars=static_vars,
                 surf_stats=self.surf_stats,
-                atmos_stats=self.atmos_stats
+                atmos_stats=self.atmos_stats,
+                delta_time=self.delta_time
             )
         else:
             raise ValueError(f"Invalid version number: {self.version}. Must be 0: Aurora, 1: AuroraSmall, or 2: AuroraHighRes.")
@@ -229,6 +235,9 @@ class GlobalForecastModule(LightningModule):
         self.lat = lat
         self.lon = lon
 
+    def set_delta_time(self, predict_step_size, hrs_each_step):
+        self.delta_time = int(predict_step_size * hrs_each_step)
+
     def set_variables(self, in_variables: list, static_variables: list, out_variables: list):
         self.in_variables = in_variables
         self.out_variables = out_variables
@@ -251,7 +260,7 @@ class GlobalForecastModule(LightningModule):
             raise NotImplementedError("Variable lead times not implemented yet.")
 
         input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
-        output_batch = self.net.forward(input_batch, timedelta(hours=int(lead_times[0])))
+        output_batch = self.net.forward(input_batch)
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)
         
         assert pred_timestamps == output_timestamps #these should always be equal
@@ -276,10 +285,15 @@ class GlobalForecastModule(LightningModule):
             raise NotImplementedError("Variable lead times not implemented yet.")
         
         input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
-        output_batch = self.net.forward(input_batch, timedelta(hours=int(lead_times[0])))
+        
+        assert int(lead_times[0]) % self.delta_time == 0, f"Invalid lead time for delta_time: {self.delta_time}" 
+        rollout_steps = int(lead_times[0]) // self.delta_time
+        with torch.inference_mode():
+            rollout_batches = [rollout_batch.to("cpu") for rollout_batch in rollout(self.net, input_batch, steps=rollout_steps)]
+        output_batch = rollout_batches[-1].to(self.device)
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
         
-        assert pred_timestamps == output_timestamps #these should always be equal
+        assert pred_timestamps == output_timestamps #these should be equal
 
         #ensure y is the same dtype as preds
         y = y.to(dtype=preds.dtype)
@@ -313,11 +327,16 @@ class GlobalForecastModule(LightningModule):
             raise NotImplementedError("Variable lead times not implemented yet.")
         
         input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
-        output_batch = self.net.forward(input_batch, timedelta(hours=int(lead_times[0])))
+        
+        assert int(lead_times[0]) % self.delta_time == 0, f"Invalid lead time: {int(lead_times[0])}hrs for timestep: {self.delta_time}hrs" 
+        rollout_steps = int(lead_times[0]) // self.delta_time
+        with torch.inference_mode():
+            rollout_batches = [rollout_batch.to("cpu") for rollout_batch in rollout(self.net, input_batch, steps=rollout_steps)]
+        output_batch = rollout_batches[-1].to(self.device)
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
         
-        assert pred_timestamps == output_timestamps #these should always be equal        
-        
+        assert pred_timestamps == output_timestamps #these should be equal
+      
         #ensure y is the same dtype as preds
         y = y.to(dtype=preds.dtype)
         
@@ -326,6 +345,7 @@ class GlobalForecastModule(LightningModule):
         self.test_lat_weighted_rmse_spatial_map.update(preds, y)
         self.test_lat_weighted_acc.update(preds, y, output_timestamps)
         self.test_lat_weighted_acc_spatial_map.update(preds, y, output_timestamps)
+
 
     def on_test_epoch_end(self):
         w_mse = self.test_lat_weighted_mse.compute()
@@ -344,11 +364,11 @@ class GlobalForecastModule(LightningModule):
                 sync_dist=True
             )
 
-        #spatial maps
-        for var in w_rmse_spatial_maps.keys():
-            plot_spatial_map(np.flipud(w_rmse_spatial_maps[var].cpu().numpy()), title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
-        for var in w_acc_spatial_maps.keys():
-            plot_spatial_map(np.flipud(w_acc_spatial_maps[var].cpu().numpy()), title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+        # #spatial maps
+        # for var in w_rmse_spatial_maps.keys():
+        #     plot_spatial_map(np.flipud(w_rmse_spatial_maps[var].cpu().numpy()), title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+        # for var in w_acc_spatial_maps.keys():
+        #     plot_spatial_map(np.flipud(w_acc_spatial_maps[var].cpu().numpy()), title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
 
         self.test_lat_weighted_mse.reset()
         self.test_lat_weighted_rmse.reset()

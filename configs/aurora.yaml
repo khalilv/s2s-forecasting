@@ -2,13 +2,13 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/test
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/small/zero_shot
 
   precision: 16
 
   devices: 1
   num_nodes: 1
-  accelerator: cpu
+  accelerator: gpu
   strategy: ddp
 
   min_epochs: 1
@@ -63,8 +63,8 @@ trainer:
 
 # ---------------------------- MODEL -------------------------------------------
 model:
-  pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/aurora-0.25-small-pretrained.ckpt"
-  version: 1
+  pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/aurora-0.25-finetuned.ckpt"
+  version: 0
   lr: 5e-7
   beta_1: 0.9
   beta_2: 0.999
@@ -149,19 +149,6 @@ data:
       "temperature_850",
       "temperature_925",
       "temperature_1000",
-      # "relative_humidity_50",
-      # "relative_humidity_100",
-      # "relative_humidity_150",
-      # "relative_humidity_200",
-      # "relative_humidity_250",
-      # "relative_humidity_300",
-      # "relative_humidity_400",
-      # "relative_humidity_500",
-      # "relative_humidity_600",
-      # "relative_humidity_700",
-      # "relative_humidity_850",
-      # "relative_humidity_925",
-      # "relative_humidity_1000",
       "specific_humidity_50",
       "specific_humidity_100",
       "specific_humidity_150",
@@ -178,6 +165,7 @@ data:
     ]
   # predict_range (steps) * hrs_each_step = lead_time (hrs)
   predict_range: 1
+  predict_step_size: 1
   hrs_each_step: 6
   history_range: 2
   buffer_size: 10

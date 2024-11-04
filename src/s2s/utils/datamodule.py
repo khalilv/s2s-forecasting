@@ -41,6 +41,7 @@ class GlobalForecastDataModule(LightningDataModule):
         buffer_size = 10000,
         out_variables = None,
         predict_range: int = 6,
+        predict_step_size: int = 1,
         history_range: int = 1,
         hrs_each_step: int = 1,
         batch_size: int = 64,
@@ -70,6 +71,7 @@ class GlobalForecastDataModule(LightningDataModule):
         self.static_variables = static_variables
         self.buffer_size = buffer_size
         self.predict_range = predict_range
+        self.predict_step_size = predict_step_size
         self.history_range = history_range
         self.hrs_each_step = hrs_each_step
         self.batch_size = batch_size
@@ -117,7 +119,7 @@ class GlobalForecastDataModule(LightningDataModule):
         clim = torch.from_numpy(clim)
         timestamps = clim_dict['timestamps']
         return clim, timestamps
-    
+       
     def setup(self, stage: Optional[str] = None):
         # load datasets only if they're not loaded already
         if not self.data_train and not self.data_val and not self.data_test:

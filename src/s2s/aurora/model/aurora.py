@@ -50,6 +50,7 @@ class Aurora(torch.nn.Module):
         dec_mlp_ratio: float = 2.0,
         perceiver_ln_eps: float = 1e-5,
         max_history_size: int = 2,
+        delta_time: int = 6,
         use_lora: bool = True,
         lora_steps: int = 40,
         lora_mode: LoRAMode = "single",
@@ -97,6 +98,7 @@ class Aurora(torch.nn.Module):
             max_history_size (int, optional): Maximum number of history steps. You can load
                 checkpoints with a smaller `max_history_size`, but you cannot load checkpoints
                 with a larger `max_history_size`.
+            delta_time (int, optional): The forecast horizon in hours, representing how far ahead to predict at each step.
             use_lora (bool, optional): Use LoRA adaptation.
             lora_steps (int, optional): Use different LoRA adaptation for the first so-many roll-out
                 steps.
@@ -118,7 +120,7 @@ class Aurora(torch.nn.Module):
         self.patch_size = patch_size
         self.surf_stats = surf_stats or dict()
         self.atmos_stats = atmos_stats or dict()
-
+        self.timedelta = timedelta(hours=delta_time)
         self.autocast = autocast
         self.max_history_size = max_history_size
 
@@ -183,7 +185,7 @@ class Aurora(torch.nn.Module):
             perceiver_ln_eps=perceiver_ln_eps,
         )
 
-    def forward(self, batch: Batch, lead_time: timedelta) -> Batch:
+    def forward(self, batch: Batch) -> Batch:
         """Forward pass.
 
         Args:
@@ -215,19 +217,19 @@ class Aurora(torch.nn.Module):
 
         x = self.encoder(
             batch,
-            lead_time=lead_time,
+            lead_time=self.timedelta,
         )
         with torch.autocast(device_type="cuda") if self.autocast else contextlib.nullcontext():
             x = self.backbone(
                 x,
-                lead_time=lead_time,
+                lead_time=self.timedelta,
                 patch_res=patch_res,
                 rollout_step=batch.metadata.rollout_step,
             )
         pred = self.decoder(
             x,
             batch,
-            lead_time=lead_time,
+            lead_time=self.timedelta,
             patch_res=patch_res,
         )
 
@@ -269,6 +271,7 @@ class Aurora(torch.nn.Module):
             strict (bool, optional): Error if the model parameters are not exactly equal to the
                 parameters in the checkpoint. Defaults to `True`.
         """
+        print(f"Loading checkpoint weights from {path}")
         # Assume that all parameters are either on the CPU or on the GPU.
         device = next(self.parameters()).device
 

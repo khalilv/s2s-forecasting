@@ -140,7 +140,8 @@ data:
     ]
   out_variables: ["2m_temperature"]
   # predict_range (steps) * hrs_each_step = lead_time (hrs)
-  predict_range: 24
+  predict_range: 168
+  predict_step_size: 24
   hrs_each_step: 1
   history_range: 1
   buffer_size: 10000

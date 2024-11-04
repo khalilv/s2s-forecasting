@@ -83,9 +83,9 @@ class GlobalForecastModule(LightningModule):
 
     def load_pretrained_weights(self, pretrained_path):
         if pretrained_path.startswith("http"):
-            checkpoint = torch.hub.load_state_dict_from_url(pretrained_path, map_location=torch.device("cpu"))
+            checkpoint = torch.hub.load_state_dict_from_url(pretrained_path, map_location=torch.device("cpu"), weights_only=True)
         else:
-            checkpoint = torch.load(pretrained_path, map_location=torch.device("cpu"))
+            checkpoint = torch.load(pretrained_path, map_location=torch.device("cpu"), weights_only=True)
         print("Loading pre-trained checkpoint from: %s" % pretrained_path)
         checkpoint_model = checkpoint["state_dict"]
         # interpolate positional embedding
