@@ -205,7 +205,6 @@ def zarr2np(path, variables, years, save_dir, partition, num_shards_per_year, hr
         "orography", 
         "soil_type",
         "geopotential_at_surface",
-        "mean_sea_level_pressure"
     ],
 )
 @click.option("--start_train_year", type=int, default=1979)
