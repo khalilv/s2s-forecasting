@@ -18,7 +18,7 @@ from s2s.utils.metrics import (
     lat_weighted_acc_spatial_map,
     lat_weighted_rmse_spatial_map
 )
-from s2s.utils.data_utils import plot_spatial_map, split_surface_atmospheric, AURORA_NAME_TO_VAR, SURFACE_VARS, ATMOSPHERIC_VARS, STATIC_VARS
+from s2s.utils.data_utils import plot_spatial_map_with_basemap, split_surface_atmospheric, AURORA_NAME_TO_VAR, SURFACE_VARS, ATMOSPHERIC_VARS, STATIC_VARS
 #3) Global forecast module - abstraction for training/validation/testing steps. setup for the module including hyperparameters is included here
 
 class GlobalForecastModule(LightningModule):
@@ -346,7 +346,6 @@ class GlobalForecastModule(LightningModule):
         self.test_lat_weighted_acc.update(preds, y, output_timestamps)
         self.test_lat_weighted_acc_spatial_map.update(preds, y, output_timestamps)
 
-
     def on_test_epoch_end(self):
         w_mse = self.test_lat_weighted_mse.compute()
         w_rmse = self.test_lat_weighted_rmse.compute()
@@ -364,11 +363,11 @@ class GlobalForecastModule(LightningModule):
                 sync_dist=True
             )
 
-        # #spatial maps
-        # for var in w_rmse_spatial_maps.keys():
-        #     plot_spatial_map(np.flipud(w_rmse_spatial_maps[var].cpu().numpy()), title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
-        # for var in w_acc_spatial_maps.keys():
-        #     plot_spatial_map(np.flipud(w_acc_spatial_maps[var].cpu().numpy()), title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+        #spatial maps
+        for var in w_rmse_spatial_maps.keys():
+            plot_spatial_map_with_basemap(data=torch.flip(w_rmse_spatial_maps[var].float(), dims=[0]).cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+        for var in w_acc_spatial_maps.keys():
+            plot_spatial_map_with_basemap(data=torch.flip(w_acc_spatial_maps[var].float(), dims=[0]).cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
 
         self.test_lat_weighted_mse.reset()
         self.test_lat_weighted_rmse.reset()
