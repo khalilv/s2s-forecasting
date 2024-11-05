@@ -26,9 +26,9 @@ def normalise_surf_var(
         location = locations[name]
         scale = scales[name]
     if unnormalise:
-        return x * scale + location
+        return x.float() * scale + location
     else:
-        return (x - location) / scale
+        return (x.float() - location) / scale
 
 
 def normalise_atmos_var(
@@ -50,13 +50,13 @@ def normalise_atmos_var(
             s = scales[atm_name]
         level_locations.append(l)
         level_scales.append(s)
-    location = torch.tensor(level_locations, dtype=x.dtype, device=x.device)
-    scale = torch.tensor(level_scales, dtype=x.dtype, device=x.device)
+    location = torch.tensor(level_locations, dtype=torch.float32, device=x.device)
+    scale = torch.tensor(level_scales, dtype=torch.float32, device=x.device)
 
     if unnormalise:
-        return x * scale[..., None, None] + location[..., None, None]
+        return x.float() * scale[..., None, None] + location[..., None, None]
     else:
-        return (x - location[..., None, None]) / scale[..., None, None]
+        return (x.float() - location[..., None, None]) / scale[..., None, None]
 
 
 unnormalise_surf_var = partial(normalise_surf_var, unnormalise=True)

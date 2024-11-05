@@ -2,7 +2,7 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/small/zero_shot
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/zero_shot/6h
 
   precision: 16
 
@@ -164,6 +164,42 @@ data:
       "specific_humidity_1000",
     ]
   # predict_range (steps) * hrs_each_step = lead_time (hrs)
+  plot_variables: [
+      "2m_temperature",
+      "10m_u_component_of_wind",
+      "10m_v_component_of_wind",
+      "mean_sea_level_pressure",
+      "geopotential_50",
+      "geopotential_200",
+      "geopotential_400",
+      "geopotential_500",
+      "geopotential_850",
+      "geopotential_925",
+      "u_component_of_wind_50",
+      "u_component_of_wind_200",
+      "u_component_of_wind_400",
+      "u_component_of_wind_500",
+      "u_component_of_wind_850",
+      "u_component_of_wind_925",
+      "v_component_of_wind_50",
+      "v_component_of_wind_200",
+      "v_component_of_wind_400",
+      "v_component_of_wind_500",
+      "v_component_of_wind_850",
+      "v_component_of_wind_925",
+      "temperature_50",
+      "temperature_200",
+      "temperature_400",
+      "temperature_500",
+      "temperature_850",
+      "temperature_925",
+      "specific_humidity_50",
+      "specific_humidity_200",
+      "specific_humidity_400",
+      "specific_humidity_500",
+      "specific_humidity_850",
+      "specific_humidity_925",
+  ]
   predict_range: 1
   predict_step_size: 1
   hrs_each_step: 6

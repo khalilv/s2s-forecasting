@@ -81,6 +81,7 @@ class GlobalForecastModule(LightningModule):
         self.surf_stats = {}
         self.atmos_stats = {}
         self.delta_time = None
+        self.plot_variables = []
         self.save_hyperparameters(logger=False, ignore=["net"])      
 
     
@@ -235,6 +236,10 @@ class GlobalForecastModule(LightningModule):
         self.lat = lat
         self.lon = lon
 
+    def set_plot_variables(self, plot_variables: list):
+        self.plot_variables = plot_variables
+        print('Set variables to plot spatial maps for during evaluation: ', plot_variables)
+
     def set_delta_time(self, predict_step_size, hrs_each_step):
         self.delta_time = int(predict_step_size * hrs_each_step)
 
@@ -264,9 +269,6 @@ class GlobalForecastModule(LightningModule):
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)
         
         assert pred_timestamps == output_timestamps #these should always be equal
-
-        #ensure y is the same dtype as preds
-        y = y.to(dtype=preds.dtype)
         
         batch_loss = self.train_lat_weighted_mse(preds, y)
         for var in batch_loss.keys():
@@ -294,9 +296,6 @@ class GlobalForecastModule(LightningModule):
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
         
         assert pred_timestamps == output_timestamps #these should be equal
-
-        #ensure y is the same dtype as preds
-        y = y.to(dtype=preds.dtype)
 
         self.val_lat_weighted_mse.update(preds, y)
         self.val_lat_weighted_rmse.update(preds, y)
@@ -336,10 +335,7 @@ class GlobalForecastModule(LightningModule):
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
         
         assert pred_timestamps == output_timestamps #these should be equal
-      
-        #ensure y is the same dtype as preds
-        y = y.to(dtype=preds.dtype)
-        
+              
         self.test_lat_weighted_mse.update(preds, y)
         self.test_lat_weighted_rmse.update(preds, y)
         self.test_lat_weighted_rmse_spatial_map.update(preds, y)
@@ -365,9 +361,11 @@ class GlobalForecastModule(LightningModule):
 
         #spatial maps
         for var in w_rmse_spatial_maps.keys():
-            plot_spatial_map_with_basemap(data=torch.flip(w_rmse_spatial_maps[var].float(), dims=[0]).cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+            if any(plot_var in var for plot_var in self.plot_variables):
+                plot_spatial_map_with_basemap(data=torch.flip(w_rmse_spatial_maps[var].float(), dims=[0]).cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
         for var in w_acc_spatial_maps.keys():
-            plot_spatial_map_with_basemap(data=torch.flip(w_acc_spatial_maps[var].float(), dims=[0]).cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+            if any(plot_var in var for plot_var in self.plot_variables):
+                plot_spatial_map_with_basemap(data=torch.flip(w_acc_spatial_maps[var].float(), dims=[0]).cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
 
         self.test_lat_weighted_mse.reset()
         self.test_lat_weighted_rmse.reset()

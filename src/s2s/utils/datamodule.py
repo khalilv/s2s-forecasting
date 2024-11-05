@@ -40,6 +40,7 @@ class GlobalForecastDataModule(LightningDataModule):
         static_variables,
         buffer_size = 10000,
         out_variables = None,
+        plot_variables = None,
         predict_range: int = 6,
         predict_step_size: int = 1,
         history_range: int = 1,
@@ -65,6 +66,14 @@ class GlobalForecastDataModule(LightningDataModule):
             self.out_variables = out_variables
         else:
             self.out_variables = out_variables
+        
+        if plot_variables is None:
+            self.plot_variables = [] #set plot variables to an empty list if not specified
+        elif isinstance(out_variables, str):
+            plot_variables = [plot_variables]
+            self.plot_variables = plot_variables
+        else:
+            self.plot_variables = plot_variables
 
         self.root_dir = root_dir
         self.in_variables = in_variables
@@ -78,7 +87,7 @@ class GlobalForecastDataModule(LightningDataModule):
         self.num_workers = num_workers
         self.pin_memory = pin_memory
         self.normalize_data = normalize_data
-
+        
         self.lister_train = glob.glob(os.path.join(self.root_dir, "train", "*"))
         self.lister_val = glob.glob(os.path.join(self.root_dir, "val", "*"))
         self.lister_test = glob.glob(os.path.join(self.root_dir, "test", "*"))

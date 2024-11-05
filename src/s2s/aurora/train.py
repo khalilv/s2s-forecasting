@@ -27,6 +27,7 @@ def main():
     cli.model.set_val_clim(cli.datamodule.val_clim, cli.datamodule.val_clim_timestamps)
     cli.model.set_test_clim(cli.datamodule.test_clim, cli.datamodule.val_clim_timestamps)
     cli.model.set_delta_time(cli.datamodule.predict_step_size, cli.datamodule.hrs_each_step)
+    cli.model.set_plot_variables(cli.datamodule.plot_variables)
     cli.model.init_metrics()
     cli.model.init_network()
 

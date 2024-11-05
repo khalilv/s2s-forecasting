@@ -187,10 +187,10 @@ class lat_weighted_rmse_spatial_map(Metric):
         spatial_map_dict = {}
 
         for i, var in enumerate(self.vars):
-            spatial_map_name = f"w_rmse_spatial_map_{var}_{self.suffix}" if self.suffix else f"w_rmse_spatial_map_{var}"
+            spatial_map_name = f"w_rmse_spatial_{var}_{self.suffix}" if self.suffix else f"w_rmse_spatial_map_{var}"
             spatial_map_dict[spatial_map_name] = torch.sqrt((error[:, i] * w_lat).mean(dim=(0)))
 
-        spatial_map_name = f"w_rmse_{self.suffix}" if self.suffix else f"w_rmse"
+        spatial_map_name = f"w_rmse_spatial_{self.suffix}" if self.suffix else f"w_rmse"
         spatial_map_dict[spatial_map_name] = torch.mean(torch.stack(list(spatial_map_dict.values())), dim=(0))
         
         return spatial_map_dict

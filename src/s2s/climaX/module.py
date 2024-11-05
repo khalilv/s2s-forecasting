@@ -188,8 +188,9 @@ class GlobalForecastModule(LightningModule):
 
         preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
         
-        #ensure y is the same dtype as preds
-        y = y.to(dtype=preds.dtype)
+        #set y and preds to float32 for metric calculations
+        preds = preds.float()
+        y = y.float()
         
         batch_loss = self.train_lat_weighted_mse(preds, y)
         for var in batch_loss.keys():
@@ -223,8 +224,9 @@ class GlobalForecastModule(LightningModule):
 
         preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
         
-        #ensure y is the same dtype as preds
-        y = y.to(dtype=preds.dtype)
+        #set y and preds to float32 for metric calculations
+        preds = preds.float()
+        y = y.float()
 
         self.val_lat_weighted_mse.update(preds, y)
         self.val_lat_weighted_rmse.update(preds, y)
@@ -270,8 +272,9 @@ class GlobalForecastModule(LightningModule):
 
         preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
 
-        #ensure y is the same dtype as preds
-        y = y.to(dtype=preds.dtype)
+        #set y and preds to float32 for metric calculations
+        preds = preds.float()
+        y = y.float()
         
         self.test_lat_weighted_mse.update(preds, y)
         self.test_lat_weighted_rmse.update(preds, y)
