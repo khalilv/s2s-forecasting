@@ -7,11 +7,29 @@ if [ ! -d "${ROOT}/${DATASET}" ]; then
     mkdir -p "${ROOT}/${DATASET}"
 fi
 for file in ${FILES[@]}; do
-    root_directory="/glade/derecho/scratch/kvirji"
-    gsutil -m cp "gs://weatherbench2/datasets/era5/${DATASET}/${file}" "${ROOT}/${DATASET}/${file}"
+    if [ ! -f "${ROOT}/${DATASET}/${file}" ]; then
+        echo "copying ${file}"
+        gsutil -m cp "gs://weatherbench2/datasets/era5/${DATASET}/${file}" "${ROOT}/${DATASET}/${file}"
+    else
+        echo "${file} already exists."
+    fi
 done
 for variable in ${VARIABLES[@]}; do
     if [ ! -d "${ROOT}/${DATASET}/${variable}" ]; then
-        gsutil -m cp -r "gs://weatherbench2/datasets/era5/${DATASET}/${variable}/" "${ROOT}/${DATASET}/"
+        mkdir -p "${ROOT}/${DATASET}/${variable}"
     fi
+    # list files in the remote directory
+    remote_files=$(gsutil ls "gs://weatherbench2/datasets/era5/${DATASET}/${variable}/")
+    
+    #copy each file if they do not exist
+    for remote_file in $remote_files; do
+        local_file="${ROOT}/${DATASET}/${variable}/$(basename $remote_file)"
+        
+        if [ ! -f "$local_file" ]; then
+            echo "copying ${remote_file}"
+            gsutil -m cp "$remote_file" "$local_file"
+        else
+            echo "${remote_file} already exists."
+        fi
+    done
 done

@@ -51,7 +51,7 @@ class Aurora(torch.nn.Module):
         perceiver_ln_eps: float = 1e-5,
         max_history_size: int = 2,
         delta_time: int = 6,
-        use_lora: bool = True,
+        use_lora: bool = False,
         lora_steps: int = 40,
         lora_mode: LoRAMode = "single",
         surf_stats: Optional[Dict[str, Tuple[float, float]]] = None,
