@@ -236,6 +236,7 @@ class lat_weighted_acc(Metric):
         clim_subset_indices = [clim_timestamp_to_index[timestamp] for timestamp in decoded_timestamps_no_year]
         clim_subset = self.clim[clim_subset_indices]
         clim_subset = clim_subset.to(device=targets.device)
+        assert preds.shape == clim_subset.shape
         preds = preds - clim_subset
         targets = targets - clim_subset
         loss_dict = {}
@@ -292,6 +293,7 @@ class lat_weighted_acc_spatial_map(Metric):
         clim_subset_indices = [clim_timestamp_to_index[timestamp] for timestamp in decoded_timestamps_no_year]
         clim_subset = self.clim[clim_subset_indices]
         clim_subset = clim_subset.to(device=targets.device)
+        assert preds.shape == clim_subset.shape
         preds = preds - clim_subset
         targets = targets - clim_subset
         spatial_map_dict = {}

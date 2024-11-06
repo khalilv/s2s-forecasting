@@ -6,7 +6,7 @@ from typing import Any
 from datetime import datetime
 import torch
 from pytorch_lightning import LightningModule
-
+from tqdm import tqdm
 from s2s.aurora.model.aurora import Aurora, AuroraSmall, AuroraHighRes
 from s2s.aurora.batch import Batch, Metadata
 from s2s.aurora.rollout import rollout
@@ -218,17 +218,17 @@ class GlobalForecastModule(LightningModule):
         for v in variables:
             if v in SURFACE_VARS:
                 surf_data = batch.surf_vars[AURORA_NAME_TO_VAR[v]][:,0,:,:]
-                preds.append(surf_data)
+                preds.append(torch.flip(surf_data, dims=[-2]))
             else: 
                 atm_var = '_'.join(v.split('_')[:-1])
                 pressure_level = v.split('_')[-1]
                 assert pressure_level.isdigit(), f"Found invalid pressure level in {v}"
                 if atm_var in ATMOSPHERIC_VARS:
                     atm_data = batch.atmos_vars[AURORA_NAME_TO_VAR[atm_var]][:,0,batch.metadata.atmos_levels.index(int(pressure_level)),:,:]
-                    preds.append(atm_data)
+                    preds.append(torch.flip(atm_data, dims=[-2]))
                 else:
                     raise ValueError(f"{v} could not be identified as a surface or atmospheric variable")  
-        preds = torch.stack(preds, dim=1)
+        preds = torch.stack(preds, dim=1) #(T, V, H, W)
         return preds, timestamps
 
 
@@ -360,12 +360,12 @@ class GlobalForecastModule(LightningModule):
             )
 
         #spatial maps
-        for var in w_rmse_spatial_maps.keys():
+        for var in tqdm(w_rmse_spatial_maps.keys(), desc="Plotting RMSE spatial maps"):
             if any(plot_var in var for plot_var in self.plot_variables):
-                plot_spatial_map_with_basemap(data=torch.flip(w_rmse_spatial_maps[var].float(), dims=[0]).cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
-        for var in w_acc_spatial_maps.keys():
+                plot_spatial_map_with_basemap(data=w_rmse_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+        for var in tqdm(w_acc_spatial_maps.keys(), desc="Plotting ACC spatial maps"):
             if any(plot_var in var for plot_var in self.plot_variables):
-                plot_spatial_map_with_basemap(data=torch.flip(w_acc_spatial_maps[var].float(), dims=[0]).cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+                plot_spatial_map_with_basemap(data=w_acc_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
 
         self.test_lat_weighted_mse.reset()
         self.test_lat_weighted_rmse.reset()

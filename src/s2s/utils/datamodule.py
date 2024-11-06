@@ -124,7 +124,7 @@ class GlobalForecastDataModule(LightningDataModule):
         assert len(files) == 1, f"Expected exactly one file in {partition} directory, but found {len(files)}"
         path = files[0]
         clim_dict = np.load(path)
-        clim = np.concatenate([clim_dict[var] for var in variables])
+        clim = np.concatenate([clim_dict[var] for var in variables], axis=1)
         clim = torch.from_numpy(clim)
         timestamps = clim_dict['timestamps']
         return clim, timestamps
