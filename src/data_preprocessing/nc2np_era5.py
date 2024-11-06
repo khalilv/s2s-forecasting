@@ -18,8 +18,8 @@ def nc2np_climatology(path, variables, years, save_dir, partition, hrs_per_step)
     os.makedirs(os.path.join(save_dir, partition), exist_ok=True)
 
     climatology = {}
+    valid_counts = {}
     for year in tqdm(years):
-        np_vars = {}
 
         # non-constant fields
         for var in variables:
@@ -30,12 +30,17 @@ def nc2np_climatology(path, variables, years, save_dir, partition, hrs_per_step)
             if len(ds[code].shape) == 3:  # surface level variablesif not any(is_leap_year(year) for year in years):
 
                 ds[code] = ds[code].expand_dims("val", axis=1)
-                np_vars[var] = ds[code].to_numpy()
-
+                surf_var = ds[code].to_numpy()
+                adjusted_data = leap_year_data_adjustment(surf_var, hrs_per_step)
+                valid_mask = ~np.isnan(adjusted_data)
                 if var not in climatology:
-                    climatology[var] = [leap_year_data_adjustment(np_vars[var], hrs_per_step)]
+                    climatology[var] = np.zeros(adjusted_data.shape)
+                    valid_counts[var] = np.zeros(adjusted_data.shape)
+                    climatology[var][valid_mask] = adjusted_data[valid_mask]
+                    valid_counts[var][valid_mask] += 1
                 else:
-                    climatology[var].append(leap_year_data_adjustment(np_vars[var], hrs_per_step))
+                    climatology[var][valid_mask] += adjusted_data[valid_mask]
+                    valid_counts[var][valid_mask] += 1
 
             else:  # multiple-level variables, only use a subset
                 assert len(ds[code].shape) == 4
@@ -44,16 +49,22 @@ def nc2np_climatology(path, variables, years, save_dir, partition, hrs_per_step)
                 for level in all_levels:
                     ds_level = ds.sel(level=[level])
                     level = int(level)
-                    np_vars[f"{var}_{level}"] = ds_level[code].to_numpy()
-
+                    atm_var = ds_level[code].to_numpy()
+                    
+                    adjusted_data = leap_year_data_adjustment(atm_var, hrs_per_step)
+                    valid_mask = ~np.isnan(adjusted_data)
                     if f"{var}_{level}" not in climatology:
-                        climatology[f"{var}_{level}"] = [leap_year_data_adjustment(np_vars[f"{var}_{level}"], hrs_per_step)]
+                        climatology[f"{var}_{level}"] = np.zeros(adjusted_data.shape)
+                        valid_counts[f"{var}_{level}"] = np.zeros(adjusted_data.shape)
+                        climatology[f"{var}_{level}"][valid_mask] = adjusted_data[valid_mask]
+                        valid_counts[f"{var}_{level}"][valid_mask] += 1
                     else:
-                        climatology[f"{var}_{level}"].append(leap_year_data_adjustment(np_vars[f"{var}_{level}"], hrs_per_step))
+                        climatology[f"{var}_{level}"][valid_mask] += adjusted_data[valid_mask]
+                        valid_counts[f"{var}_{level}"][valid_mask] += 1
+
     
     for var in climatology.keys():
-        climatology[var] = np.stack(climatology[var], axis=0)
-    climatology = {k: np.nanmean(v, axis=0) for k, v in climatology.items()}
+        climatology[var] = np.divide(climatology[var], valid_counts[var], where=(valid_counts[var] != 0))
     
     #save timestamps
     timestamps = ds.time.to_numpy()
