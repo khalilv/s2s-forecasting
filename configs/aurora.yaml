@@ -2,7 +2,7 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/zero_shot/1d-6h-5.625
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/zero_shot/6h-6h-5.625
 
   precision: 16
 
@@ -169,7 +169,7 @@ data:
       "geopotential_500",
       "temperature_850",
   ]
-  predict_range: 4
+  predict_range: 1
   predict_step_size: 1
   hrs_each_step: 6
   history_range: 2

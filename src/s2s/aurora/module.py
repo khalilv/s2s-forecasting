@@ -360,12 +360,14 @@ class GlobalForecastModule(LightningModule):
             )
 
         #spatial maps
-        for var in tqdm(w_rmse_spatial_maps.keys(), desc="Plotting RMSE spatial maps"):
-            if any(plot_var in var for plot_var in self.plot_variables):
-                plot_spatial_map_with_basemap(data=w_rmse_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
-        for var in tqdm(w_acc_spatial_maps.keys(), desc="Plotting ACC spatial maps"):
-            if any(plot_var in var for plot_var in self.plot_variables):
-                plot_spatial_map_with_basemap(data=w_acc_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+        for plot_var in tqdm(self.plot_variables, desc="Plotting RMSE spatial maps"):
+            for var in w_rmse_spatial_maps.keys():
+                if plot_var in var:
+                    plot_spatial_map_with_basemap(data=w_rmse_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+        for plot_var in tqdm(self.plot_variables, desc="Plotting ACC spatial maps"):
+            for var in w_acc_spatial_maps.keys():
+                if plot_var in var:
+                    plot_spatial_map_with_basemap(data=w_acc_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
 
         self.test_lat_weighted_mse.reset()
         self.test_lat_weighted_rmse.reset()

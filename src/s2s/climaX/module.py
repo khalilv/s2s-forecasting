@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from pytorch_lightning import LightningModule
 from torchvision.transforms import transforms
-
+from tqdm import tqdm
 from s2s.climaX.arch import ClimaX
 from s2s.utils.lr_scheduler import LinearWarmupCosineAnnealingLR
 from s2s.utils.metrics import (
@@ -18,7 +18,7 @@ from s2s.utils.metrics import (
     lat_weighted_rmse_spatial_map
 )
 from s2s.climaX.pos_embed import interpolate_pos_embed
-from s2s.utils.data_utils import plot_spatial_map
+from s2s.utils.data_utils import plot_spatial_map_with_basemap
 #3) Global forecast module - abstraction for training/validation/testing steps. setup for the module including hyperparameters is included here
 
 class GlobalForecastModule(LightningModule):
@@ -79,6 +79,7 @@ class GlobalForecastModule(LightningModule):
         self.drop_rate = drop_rate
         self.parallel_patch_embed = parallel_patch_embed
         self.denormalization = None
+        self.plot_variables = []
         self.save_hyperparameters(logger=False, ignore=["net"])      
 
     def load_pretrained_weights(self, pretrained_path):
@@ -164,7 +165,10 @@ class GlobalForecastModule(LightningModule):
     def set_test_clim(self, clim, timestamps):
         self.test_clim = clim
         self.test_clim_timestamps = timestamps
-    
+
+    def set_plot_variables(self, plot_variables: list):
+        self.plot_variables = plot_variables
+        print('Set variables to plot spatial maps for during evaluation: ', plot_variables)
 
     def training_step(self, batch: Any, batch_idx: int):
         x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch #spread batch data 
@@ -299,11 +303,15 @@ class GlobalForecastModule(LightningModule):
                 sync_dist=True
             )
 
-        #spatial maps
-        for var in w_rmse_spatial_maps.keys():
-            plot_spatial_map(np.flipud(w_rmse_spatial_maps[var].cpu().numpy()), title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
-        for var in w_acc_spatial_maps.keys():
-            plot_spatial_map(np.flipud(w_acc_spatial_maps[var].cpu().numpy()), title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+         #spatial maps
+        for plot_var in tqdm(self.plot_variables, desc="Plotting RMSE spatial maps"):
+            for var in w_rmse_spatial_maps.keys():
+                if plot_var in var:
+                    plot_spatial_map_with_basemap(data=w_rmse_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+        for plot_var in tqdm(self.plot_variables, desc="Plotting ACC spatial maps"):
+            for var in w_acc_spatial_maps.keys():
+                if plot_var in var:
+                    plot_spatial_map_with_basemap(data=w_acc_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
 
         self.test_lat_weighted_mse.reset()
         self.test_lat_weighted_rmse.reset()

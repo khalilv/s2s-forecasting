@@ -2,7 +2,7 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/test
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/
 
   precision: 16
 
@@ -138,9 +138,14 @@ data:
       "specific_humidity_850",
       "specific_humidity_925",
     ]
-  out_variables: ["2m_temperature"]
+  plot_variables: [
+      "2m_temperature",
+  ]
+  out_variables: [
+    "2m_temperature",
+  ]
   # predict_range (steps) * hrs_each_step = lead_time (hrs)
-  predict_range: 168
+  predict_range: 24
   predict_step_size: 24
   hrs_each_step: 1
   history_range: 1
