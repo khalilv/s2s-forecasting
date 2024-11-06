@@ -8,7 +8,6 @@ if [ ! -d "${ROOT}/${DATASET}" ]; then
 fi
 for file in ${FILES[@]}; do
     if [ ! -f "${ROOT}/${DATASET}/${file}" ]; then
-        echo "copying ${file}"
         gsutil -m cp "gs://weatherbench2/datasets/era5/${DATASET}/${file}" "${ROOT}/${DATASET}/${file}"
     else
         echo "${file} already exists."
@@ -26,7 +25,6 @@ for variable in ${VARIABLES[@]}; do
         local_file="${ROOT}/${DATASET}/${variable}/$(basename $remote_file)"
         
         if [ ! -f "$local_file" ]; then
-            echo "copying ${remote_file}"
             gsutil -m cp "$remote_file" "$local_file"
         else
             echo "${remote_file} already exists."
