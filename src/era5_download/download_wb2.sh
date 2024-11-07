@@ -14,20 +14,5 @@ for file in ${FILES[@]}; do
     fi
 done
 for variable in ${VARIABLES[@]}; do
-    if [ ! -d "${ROOT}/${DATASET}/${variable}" ]; then
-        mkdir -p "${ROOT}/${DATASET}/${variable}"
-    fi
-    # list files in the remote directory
-    remote_files=$(gsutil ls "gs://weatherbench2/datasets/era5/${DATASET}/${variable}/")
-    
-    #copy each file if they do not exist
-    for remote_file in $remote_files; do
-        local_file="${ROOT}/${DATASET}/${variable}/$(basename $remote_file)"
-        
-        if [ ! -f "$local_file" ]; then
-            gsutil -m cp "$remote_file" "$local_file"
-        else
-            echo "${remote_file} already exists."
-        fi
-    done
+    gsutil -m cp -r -n "gs://weatherbench2/datasets/era5/${DATASET}/${variable}/" "${ROOT}/${DATASET}/"
 done
