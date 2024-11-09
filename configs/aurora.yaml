@@ -169,10 +169,11 @@ data:
       "geopotential_500",
       "temperature_850",
   ]
-  predict_range: 1
-  predict_step_size: 1
+  predict_size: 1
+  predict_step: 2
+  history_size: 1
+  history_step: 1
   hrs_each_step: 6
-  history_range: 2
   buffer_size: 10
   batch_size: 1
   num_workers: 0

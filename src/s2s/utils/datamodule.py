@@ -24,13 +24,19 @@ class GlobalForecastDataModule(LightningDataModule):
     Args:
         root_dir (str): Root directory for sharded data.
         in_variables (list): List of input variables.
+        static_variables (list): List of static variables.
         buffer_size (int): Buffer size for shuffling.
         out_variables (list, optional): List of output variables.
-        predict_range (int, optional): Predict range.
-        hrs_each_step (int, optional): Hours each step.
+        plot_variables (list, optional): List of variable to plot.
+        predict_size (int, optional): Length of outputs.
+        predict_step (int, optional): Step size between outputs.
+        history_size (int, optional): Length of history.
+        history_step (int, optional): Step size of history.
+        hrs_each_step (int, optional): Hours between consecutive steps.
         batch_size (int, optional): Batch size.
         num_workers (int, optional): Number of workers.
         pin_memory (bool, optional): Whether to pin memory.
+        normalize_data (bool, optional): Flag to normalize data.
     """
 
     def __init__(
@@ -41,9 +47,10 @@ class GlobalForecastDataModule(LightningDataModule):
         buffer_size = 10000,
         out_variables = None,
         plot_variables = None,
-        predict_range: int = 6,
-        predict_step_size: int = 1,
-        history_range: int = 1,
+        predict_size: int = 1,
+        predict_step: int = 1,
+        history_size: int = 2,
+        history_step: int = 1,
         hrs_each_step: int = 1,
         batch_size: int = 64,
         num_workers: int = 0,
@@ -79,18 +86,19 @@ class GlobalForecastDataModule(LightningDataModule):
         self.in_variables = in_variables
         self.static_variables = static_variables
         self.buffer_size = buffer_size
-        self.predict_range = predict_range
-        self.predict_step_size = predict_step_size
-        self.history_range = history_range
+        self.predict_size = predict_size
+        self.predict_step = predict_step       
+        self.history_size = history_size
+        self.history_step = history_step
         self.hrs_each_step = hrs_each_step
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
         self.normalize_data = normalize_data
         
-        self.lister_train = glob.glob(os.path.join(self.root_dir, "train", "*"))
-        self.lister_val = glob.glob(os.path.join(self.root_dir, "val", "*"))
-        self.lister_test = glob.glob(os.path.join(self.root_dir, "test", "*"))
+        self.lister_train = sorted(glob.glob(os.path.join(self.root_dir, "train", "*")))
+        self.lister_val = sorted(glob.glob(os.path.join(self.root_dir, "val", "*")))
+        self.lister_test = sorted(glob.glob(os.path.join(self.root_dir, "test", "*")))
         self.static_variable_file = os.path.join(self.root_dir, "static", "static.npz")
 
         in_mean, in_std = self.get_normalization_stats(self.in_variables)
@@ -145,8 +153,10 @@ class GlobalForecastDataModule(LightningDataModule):
                             out_variables=self.out_variables,
                             shuffle=False,
                             multi_dataset_training=False,
-                            max_predict_range=self.predict_range,
-                            history_range=self.history_range,
+                            predict_size=self.predict_size,
+                            predict_step=self.predict_step,
+                            history_size=self.history_size,
+                            history_step=self.history_step,
                             hrs_each_step=self.hrs_each_step,
                         ),
                         random_lead_time=False,
@@ -171,8 +181,10 @@ class GlobalForecastDataModule(LightningDataModule):
                         out_variables=self.out_variables,
                         shuffle=False,
                         multi_dataset_training=False,
-                        max_predict_range=self.predict_range,
-                        history_range=self.history_range,
+                        predict_size=self.predict_size,
+                        predict_step=self.predict_step,
+                        history_size=self.history_size,
+                        history_step=self.history_step,
                         hrs_each_step=self.hrs_each_step,
                     ),
                     random_lead_time=False,
@@ -195,8 +207,10 @@ class GlobalForecastDataModule(LightningDataModule):
                         out_variables=self.out_variables,
                         shuffle=False,
                         multi_dataset_training=False,
-                        max_predict_range=self.predict_range,
-                        history_range=self.history_range,
+                        predict_size=self.predict_size,
+                        predict_step=self.predict_step,
+                        history_size=self.history_size,
+                        history_step=self.history_step,
                         hrs_each_step=self.hrs_each_step,
                     ),
                     random_lead_time=False,

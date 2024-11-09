@@ -104,8 +104,8 @@ def collate_fn(batch):
     variables = batch[0][4]
     static_variables = batch[0][5]
     out_variables = batch[0][6]
-    input_timestamps = [batch[i][7] for i in range(len(batch))]
-    output_timestamps = [batch[i][8] for i in range(len(batch))]
+    input_timestamps = np.array([batch[i][7] for i in range(len(batch))])
+    output_timestamps = np.array([batch[i][8] for i in range(len(batch))])
     return (
         inp,
         static,

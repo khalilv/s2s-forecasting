@@ -288,18 +288,17 @@ class GlobalForecastModule(LightningModule):
         
         input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
         
-        assert int(lead_times[0]) % self.delta_time == 0, f"Invalid lead time for delta_time: {self.delta_time}" 
-        rollout_steps = int(lead_times[0]) // self.delta_time
+        rollout_steps = y.shape[1]
         with torch.inference_mode():
             rollout_batches = [rollout_batch.to("cpu") for rollout_batch in rollout(self.net, input_batch, steps=rollout_steps)]
         output_batch = rollout_batches[-1].to(self.device)
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
         
-        assert pred_timestamps == output_timestamps #these should be equal
+        assert pred_timestamps == output_timestamps[:,-1] #these should be equal
 
-        self.val_lat_weighted_mse.update(preds, y)
-        self.val_lat_weighted_rmse.update(preds, y)
-        self.val_lat_weighted_acc.update(preds, y, output_timestamps)
+        self.val_lat_weighted_mse.update(preds, y[:,-1])
+        self.val_lat_weighted_rmse.update(preds, y[:,-1])
+        self.val_lat_weighted_acc.update(preds, y[:,-1], output_timestamps[:,-1])
         
     def on_validation_epoch_end(self):
         w_mse = self.val_lat_weighted_mse.compute()
@@ -327,20 +326,19 @@ class GlobalForecastModule(LightningModule):
         
         input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
         
-        assert int(lead_times[0]) % self.delta_time == 0, f"Invalid lead time: {int(lead_times[0])}hrs for timestep: {self.delta_time}hrs" 
-        rollout_steps = int(lead_times[0]) // self.delta_time
+        rollout_steps = y.shape[1]
         with torch.inference_mode():
             rollout_batches = [rollout_batch.to("cpu") for rollout_batch in rollout(self.net, input_batch, steps=rollout_steps)]
         output_batch = rollout_batches[-1].to(self.device)
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
         
-        assert pred_timestamps == output_timestamps #these should be equal
-              
-        self.test_lat_weighted_mse.update(preds, y)
-        self.test_lat_weighted_rmse.update(preds, y)
-        self.test_lat_weighted_rmse_spatial_map.update(preds, y)
-        self.test_lat_weighted_acc.update(preds, y, output_timestamps)
-        self.test_lat_weighted_acc_spatial_map.update(preds, y, output_timestamps)
+        assert pred_timestamps == output_timestamps[:,-1] #these should be equal       
+                      
+        self.test_lat_weighted_mse.update(preds, y[:,-1])
+        self.test_lat_weighted_rmse.update(preds, y[:,-1])
+        self.test_lat_weighted_rmse_spatial_map.update(preds, y[:,-1])
+        self.test_lat_weighted_acc.update(preds, y[:,-1], output_timestamps[:,-1])
+        self.test_lat_weighted_acc_spatial_map.update(preds, y[:,-1], output_timestamps[:,-1])
 
     def on_test_epoch_end(self):
         w_mse = self.test_lat_weighted_mse.compute()
