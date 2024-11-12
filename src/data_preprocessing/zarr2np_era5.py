@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from s2s.utils.data_utils import DEFAULT_PRESSURE_LEVELS, HRS_PER_LEAP_YEAR, leap_year_data_adjustment, leap_year_time_adjustment, is_leap_year
 
-def zarr2np_climatology(path, variables, years, save_dir, partition, hrs_per_step):
+def zarr2np_climatology(path, variables, years, save_dir, partition, hrs_per_step, transpose):
     assert HRS_PER_LEAP_YEAR % hrs_per_step == 0
     if not any(is_leap_year(year) for year in years):
         print("WARNING: No leap year present in climatology years. This may result in issues when calculating ACC during evaluation as there will be no climatology for Feb 29th.")
@@ -26,7 +26,8 @@ def zarr2np_climatology(path, variables, years, save_dir, partition, hrs_per_ste
             if len(zarr_ds[var].shape) == 3:  # surface level variables
                 yearly_data = zarr_ds.sel(time=str(year))[var].expand_dims("val", axis=1)
                 surf_var = yearly_data.to_numpy()
-                surf_var = np.transpose(surf_var, (0,1,3,2)) #transpose to T x 1 x H x W
+                if transpose:
+                    surf_var = np.transpose(surf_var, (0,1,3,2)) #transpose to T x 1 x H x W
                 adjusted_data = leap_year_data_adjustment(surf_var, hrs_per_step)
                 valid_mask = ~np.isnan(adjusted_data)
                 if var not in climatology:
@@ -45,7 +46,8 @@ def zarr2np_climatology(path, variables, years, save_dir, partition, hrs_per_ste
                     ds_level = zarr_ds.sel(level=[level], time=str(year))
                     level = int(level)
                     atm_var = ds_level[var].to_numpy()
-                    atm_var = np.transpose(atm_var, (0,1,3,2)) #transpose to T x 1 x H x W
+                    if transpose:
+                        atm_var = np.transpose(atm_var, (0,1,3,2)) #transpose to T x 1 x H x W
                     adjusted_data = leap_year_data_adjustment(atm_var, hrs_per_step)
                     valid_mask = ~np.isnan(adjusted_data)                    
                     if f"{var}_{level}" not in climatology:
@@ -70,7 +72,7 @@ def zarr2np_climatology(path, variables, years, save_dir, partition, hrs_per_ste
         **climatology,
     )
 
-def zarr2np_static(path, static_variables, save_dir):
+def zarr2np_static(path, static_variables, save_dir, transpose):
     os.makedirs(os.path.join(save_dir, "static"), exist_ok=True)
     zarr_ds = xr.open_zarr(path)
     if 'orography' in static_variables:
@@ -79,7 +81,9 @@ def zarr2np_static(path, static_variables, save_dir):
     normalize_mean = {}
     normalize_std = {}
     for s in static_variables:
-        static_field = zarr_ds[s].to_numpy().T
+        static_field = zarr_ds[s].to_numpy()
+        if transpose:
+            static_field = static_field.T
         static_fields[s] = static_field
         normalize_mean[s] = static_field.mean(axis=(0,1))
         normalize_std[s] = static_field.std(axis=(0,1))
@@ -87,7 +91,7 @@ def zarr2np_static(path, static_variables, save_dir):
     np.savez(os.path.join(save_dir, "static", "normalize_std.npz"), **normalize_std)
     np.savez(os.path.join(save_dir, "static", f"static.npz"),**static_fields)
 
-def zarr2np(path, variables, years, save_dir, partition, num_shards_per_year, hrs_per_step):
+def zarr2np(path, variables, years, save_dir, partition, num_shards_per_year, hrs_per_step, transpose):
     os.makedirs(os.path.join(save_dir, partition), exist_ok=True)
     zarr_ds = xr.open_zarr(path)
 
@@ -119,7 +123,8 @@ def zarr2np(path, variables, years, save_dir, partition, num_shards_per_year, hr
                 if len(zarr_ds[var].shape) == 3:  # surface level variables
                     surf_shard = zarr_ds.sel(time=str(year))[var][start_id:end_id].expand_dims("val", axis=1)
                     sharded_data[var] = surf_shard.to_numpy()
-                    sharded_data[var] = np.transpose(sharded_data[var], (0,1,3,2)) #transpose to T x 1 x H x W
+                    if transpose:
+                        sharded_data[var] = np.transpose(sharded_data[var], (0,1,3,2)) #transpose to T x 1 x H x W
                     N_surf = sharded_data[var].shape[0]
 
                     if partition == "train":  # compute mean and std of each var in each shard
@@ -140,7 +145,8 @@ def zarr2np(path, variables, years, save_dir, partition, num_shards_per_year, hr
                         ds_level = zarr_ds.sel(level=[level], time=str(year))
                         level = int(level)
                         sharded_data[f"{var}_{level}"] = ds_level[var][start_id:end_id].to_numpy()
-                        sharded_data[f"{var}_{level}"] = np.transpose(sharded_data[f"{var}_{level}"], (0,1,3,2)) #transpose to T x 1 x H x W
+                        if transpose:
+                            sharded_data[f"{var}_{level}"] = np.transpose(sharded_data[f"{var}_{level}"], (0,1,3,2)) #transpose to T x 1 x H x W
                         N_atm = sharded_data[f"{var}_{level}"].shape[0]
 
                         if partition == "train":  # compute mean and std of each var in each year
@@ -187,16 +193,16 @@ def zarr2np(path, variables, years, save_dir, partition, num_shards_per_year, hr
     multiple=True,
     default=[
         "2m_temperature",
-        # "10m_u_component_of_wind",
-        # "10m_v_component_of_wind",
-        # "mean_sea_level_pressure",
-        # "total_precipitation_6hr",
+        "10m_u_component_of_wind",
+        "10m_v_component_of_wind",
+        "mean_sea_level_pressure",
+        "total_precipitation_6hr",
         "geopotential",
-        # "u_component_of_wind",
-        # "v_component_of_wind",
-        # "temperature",
-        # "relative_humidity",
-        # "specific_humidity",
+        "u_component_of_wind",
+        "v_component_of_wind",
+        "temperature",
+        "relative_humidity",
+        "specific_humidity",
     ],
 )
 @click.option(
@@ -218,6 +224,7 @@ def zarr2np(path, variables, years, save_dir, partition, num_shards_per_year, hr
 @click.option("--num_shards", type=int, default=8)
 @click.option("--hrs_per_step", type=int, default=1)
 @click.option("--clim_start_year", type=int, default=1990)
+@click.option("--transpose", is_flag=True, type=bool, default=False)
 def main(
     root_dir,
     save_dir,
@@ -229,7 +236,8 @@ def main(
     end_year,
     num_shards,
     hrs_per_step,
-    clim_start_year
+    clim_start_year,
+    transpose
 ):
     assert start_val_year > start_train_year and start_test_year > start_val_year and end_year > start_test_year
     train_years = range(start_train_year, start_val_year)
@@ -238,16 +246,16 @@ def main(
 
     os.makedirs(save_dir, exist_ok=True)
 
-    zarr2np_static(root_dir, static_variables, save_dir)
+    zarr2np_static(root_dir, static_variables, save_dir, transpose)
 
-    zarr2np(root_dir, variables, train_years, save_dir, "train", num_shards, hrs_per_step)
-    zarr2np(root_dir, variables, val_years, save_dir, "val", num_shards, hrs_per_step)
-    zarr2np(root_dir, variables, test_years, save_dir, "test", num_shards, hrs_per_step)
+    zarr2np(root_dir, variables, train_years, save_dir, "train", num_shards, hrs_per_step, transpose)
+    zarr2np(root_dir, variables, val_years, save_dir, "val", num_shards, hrs_per_step, transpose)
+    zarr2np(root_dir, variables, test_years, save_dir, "test", num_shards, hrs_per_step, transpose)
 
     climatology_val_years = range(clim_start_year, start_val_year)
     climatology_test_years = range(clim_start_year, start_test_year)
-    zarr2np_climatology(root_dir, variables, climatology_val_years, save_dir, "val", hrs_per_step)
-    zarr2np_climatology(root_dir, variables, climatology_test_years, save_dir, "test", hrs_per_step)
+    zarr2np_climatology(root_dir, variables, climatology_val_years, save_dir, "val", hrs_per_step, transpose)
+    zarr2np_climatology(root_dir, variables, climatology_test_years, save_dir, "test", hrs_per_step, transpose)
 
     # save lat and lon data
     zarr_ds = xr.open_zarr(root_dir)
