@@ -96,73 +96,72 @@ def zarr2np(path, variables, years, save_dir, partition, num_shards_per_year, hr
         normalize_std = {}
 
     for year in tqdm(years):
-        np_vars = {}
-
-        # non-constant fields
-        for var in variables:
-
-            if len(zarr_ds[var].shape) == 3:  # surface level variables
-                yearly_data = zarr_ds.sel(time=str(year))[var].expand_dims("val", axis=1)
-                # remove the last 24 hours if this year has 366 days
-                np_vars[var] = yearly_data.to_numpy()
-                np_vars[var] = np.transpose(np_vars[var], (0,1,3,2)) #transpose to T x 1 x H x W
-                N = np_vars[var].shape[0]
-
-                if partition == "train":  # compute mean and std of each var in each year
-                    var_mean_yearly = np_vars[var].mean(axis=(0, 2, 3)).item()
-                    var_std_yearly = np_vars[var].std(axis=(0, 2, 3)).item()
-                    if var not in normalize_mean:
-                        normalize_mean[var] = [[var_mean_yearly, N]]
-                        normalize_std[var] = [[var_std_yearly, N]]
-                    else:
-                        normalize_mean[var].append([var_mean_yearly, N])
-                        normalize_std[var].append([var_std_yearly, N])
-
-            else:  # multiple-level variables, only use a subset
-                assert len(zarr_ds[var].shape) == 4
-                all_levels = zarr_ds["level"][:].to_numpy()
-                all_levels = np.intersect1d(all_levels, DEFAULT_PRESSURE_LEVELS)
-                for level in all_levels:
-                    ds_level = zarr_ds.sel(level=[level], time=str(year))
-                    level = int(level)
-                    # remove the last 24 hours if this year has 366 days
-                    np_vars[f"{var}_{level}"] = ds_level[var].to_numpy()
-                    np_vars[f"{var}_{level}"] = np.transpose(np_vars[f"{var}_{level}"], (0,1,3,2)) #transpose to T x 1 x H x W
-                    N = np_vars[f"{var}_{level}"].shape[0]
-
-                    if partition == "train":  # compute mean and std of each var in each year
-                        var_mean_yearly = np_vars[f"{var}_{level}"].mean(axis=(0, 2, 3)).item()
-                        var_std_yearly = np_vars[f"{var}_{level}"].std(axis=(0, 2, 3)).item()
-                        if var not in normalize_mean:
-                            normalize_mean[f"{var}_{level}"] = [[var_mean_yearly, N]]
-                            normalize_std[f"{var}_{level}"] = [[var_std_yearly, N]]
-                        else:
-                            normalize_mean[f"{var}_{level}"].append([var_mean_yearly, N])
-                            normalize_std[f"{var}_{level}"].append([var_std_yearly, N])
-
-        #save timestamps
-        timestamps = zarr_ds.sel(time=str(year)).time.to_numpy()
-        timestamps = [np.datetime_as_string(datetime, unit='m') for datetime in timestamps]
-        np_vars['timestamps'] = np.array(timestamps)
 
         if is_leap_year(year):
-            assert np_vars['timestamps'].shape[0] == (HRS_PER_LEAP_YEAR // hrs_per_step)
-            num_steps_per_shard = (HRS_PER_LEAP_YEAR // hrs_per_step) // num_shards_per_year
+            assert HRS_PER_LEAP_YEAR % hrs_per_step == 0
+            total_steps = HRS_PER_LEAP_YEAR // hrs_per_step
         else:
-            assert np_vars['timestamps'].shape[0] == ((HRS_PER_LEAP_YEAR - 24) // hrs_per_step)
-            num_steps_per_shard = ((HRS_PER_LEAP_YEAR - 24) // hrs_per_step) // num_shards_per_year
+            assert (HRS_PER_LEAP_YEAR - 24) % hrs_per_step == 0
+            total_steps = (HRS_PER_LEAP_YEAR - 24) // hrs_per_step
+
+        num_steps_per_shard = total_steps // num_shards_per_year
 
         for shard_id in range(num_shards_per_year):
+            sharded_data = {}
             start_id = shard_id * num_steps_per_shard
             if shard_id == num_shards_per_year - 1:
-                sharded_data = {k: np_vars[k][start_id:] for k in np_vars.keys()}
+                end_id = total_steps
             else:
                 end_id = start_id + num_steps_per_shard
-                sharded_data = {k: np_vars[k][start_id:end_id] for k in np_vars.keys()}
+        
+            for var in variables:
+
+                if len(zarr_ds[var].shape) == 3:  # surface level variables
+                    surf_shard = zarr_ds.sel(time=str(year))[var][start_id:end_id].expand_dims("val", axis=1)
+                    sharded_data[var] = surf_shard.to_numpy()
+                    sharded_data[var] = np.transpose(sharded_data[var], (0,1,3,2)) #transpose to T x 1 x H x W
+                    N_surf = sharded_data[var].shape[0]
+
+                    if partition == "train":  # compute mean and std of each var in each shard
+                        surf_var_mean = sharded_data[var].mean(axis=(0, 2, 3)).item()
+                        surf_var_std = sharded_data[var].std(axis=(0, 2, 3)).item()
+                        if var not in normalize_mean:
+                            normalize_mean[var] = [[surf_var_mean, N_surf]]
+                            normalize_std[var] = [[surf_var_std, N_surf]]
+                        else:
+                            normalize_mean[var].append([surf_var_mean, N_surf])
+                            normalize_std[var].append([surf_var_std, N_surf])
+
+                else:  # multiple-level variables, only use a subset
+                    assert len(zarr_ds[var].shape) == 4
+                    all_levels = zarr_ds["level"][:].to_numpy()
+                    all_levels = np.intersect1d(all_levels, DEFAULT_PRESSURE_LEVELS)
+                    for level in all_levels:
+                        ds_level = zarr_ds.sel(level=[level], time=str(year))
+                        level = int(level)
+                        sharded_data[f"{var}_{level}"] = ds_level[var][start_id:end_id].to_numpy()
+                        sharded_data[f"{var}_{level}"] = np.transpose(sharded_data[f"{var}_{level}"], (0,1,3,2)) #transpose to T x 1 x H x W
+                        N_atm = sharded_data[f"{var}_{level}"].shape[0]
+
+                        if partition == "train":  # compute mean and std of each var in each year
+                            atm_var_mean = sharded_data[f"{var}_{level}"].mean(axis=(0, 2, 3)).item()
+                            atm_var_std = sharded_data[f"{var}_{level}"].std(axis=(0, 2, 3)).item()
+                            if var not in normalize_mean:
+                                normalize_mean[f"{var}_{level}"] = [[atm_var_mean, N_atm]]
+                                normalize_std[f"{var}_{level}"] = [[atm_var_std, N_atm]]
+                            else:
+                                normalize_mean[f"{var}_{level}"].append([atm_var_mean, N_atm])
+                                normalize_std[f"{var}_{level}"].append([atm_var_std, N_atm])
+
+            #save timestamps
+            timestamps = zarr_ds.sel(time=str(year)).time[start_id:end_id].to_numpy()
+            timestamps = [np.datetime_as_string(datetime, unit='m') for datetime in timestamps]
+            sharded_data['timestamps'] = np.array(timestamps)
             np.savez(
                 os.path.join(save_dir, partition, f"{year}_{shard_id}.npz"),
                 **sharded_data,
             )
+               
 
     if partition == "train":
         for var in normalize_mean.keys():
@@ -178,7 +177,6 @@ def zarr2np(path, variables, years, save_dir, partition, num_shards_per_year, hr
         np.savez(os.path.join(save_dir, "normalize_mean.npz"), **normalize_mean)
         np.savez(os.path.join(save_dir, "normalize_std.npz"), **normalize_std)
 
-
 @click.command()
 @click.option("--root_dir", type=click.Path(exists=True))
 @click.option("--save_dir", type=str)
@@ -189,16 +187,16 @@ def zarr2np(path, variables, years, save_dir, partition, num_shards_per_year, hr
     multiple=True,
     default=[
         "2m_temperature",
-        "10m_u_component_of_wind",
-        "10m_v_component_of_wind",
-        "mean_sea_level_pressure",
-        "total_precipitation_6hr",
+        # "10m_u_component_of_wind",
+        # "10m_v_component_of_wind",
+        # "mean_sea_level_pressure",
+        # "total_precipitation_6hr",
         "geopotential",
-        "u_component_of_wind",
-        "v_component_of_wind",
-        "temperature",
-        "relative_humidity",
-        "specific_humidity",
+        # "u_component_of_wind",
+        # "v_component_of_wind",
+        # "temperature",
+        # "relative_humidity",
+        # "specific_humidity",
     ],
 )
 @click.option(
