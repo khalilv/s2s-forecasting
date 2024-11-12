@@ -86,7 +86,7 @@ model:
 
 # ---------------------------- DATA -------------------------------------------
 data:
-  root_dir: /glade/derecho/scratch/kvirji/1959-2023_01_10-6h-64x32_equiangular_conservative_preprocessed_n_shards_1
+  root_dir: /glade/derecho/scratch/kvirji/1959-2023_01_10-6h-64x32_equiangular_conservative_preprocessed_n_shards_4
   static_variables: [
     "land_sea_mask",
     "geopotential_at_surface",
@@ -170,7 +170,7 @@ data:
       "temperature_850",
   ]
   predict_size: 1
-  predict_step: 2
+  predict_step: 1
   history_size: 1
   history_step: 1
   hrs_each_step: 6

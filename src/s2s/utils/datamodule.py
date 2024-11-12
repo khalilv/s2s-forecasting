@@ -28,10 +28,10 @@ class GlobalForecastDataModule(LightningDataModule):
         buffer_size (int): Buffer size for shuffling.
         out_variables (list, optional): List of output variables.
         plot_variables (list, optional): List of variable to plot.
-        predict_size (int, optional): Length of outputs.
-        predict_step (int, optional): Step size between outputs.
-        history_size (int, optional): Length of history.
-        history_step (int, optional): Step size of history.
+        predict_size (int, optional): Length of outputs. Defaults to 1.
+        predict_step (int, optional): Step size between outputs. Defaults to 1.
+        history_size (int, optional): Length of history. Defaults to 1. Set to 0 to include only the current timestamp
+        history_step (int, optional): Step size between history elements. Defaults to 1.
         hrs_each_step (int, optional): Hours between consecutive steps.
         batch_size (int, optional): Batch size.
         num_workers (int, optional): Number of workers.
@@ -49,7 +49,7 @@ class GlobalForecastDataModule(LightningDataModule):
         plot_variables = None,
         predict_size: int = 1,
         predict_step: int = 1,
-        history_size: int = 2,
+        history_size: int = 1,
         history_step: int = 1,
         hrs_each_step: int = 1,
         batch_size: int = 64,

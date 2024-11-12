@@ -173,6 +173,9 @@ class GlobalForecastModule(LightningModule):
     def training_step(self, batch: Any, batch_idx: int):
         x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch #spread batch data 
         
+        if y.shape[1] > 1:
+            raise NotImplementedError('Multiple predicttion steps is not supported yet.')
+        
         #append 2d latitude to static variables
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
         static = torch.cat((static,lat2d_expanded), dim=1)
@@ -184,17 +187,18 @@ class GlobalForecastModule(LightningModule):
         in_variables = static_variables + ["lattitude"] + variables
 
         if inputs.shape[1] > 1:
-            raise NotImplementedError("history_range > 1 is not supported yet.")
-        inputs = inputs.squeeze() #squeeze history dimension
+            raise NotImplementedError("History_range > 1 is not supported yet.")
+        inputs = inputs.squeeze(1) #squeeze history dimension
    
         #divide lead_times by 100 following climaX
         lead_times = lead_times / 100
+        lead_times = lead_times.squeeze(1)
 
         preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
         
         #set y and preds to float32 for metric calculations
         preds = preds.float()
-        y = y.float()
+        y = y.float().squeeze(1)
         
         batch_loss = self.train_lat_weighted_mse(preds, y)
         for var in batch_loss.keys():
@@ -209,6 +213,9 @@ class GlobalForecastModule(LightningModule):
     def validation_step(self, batch: Any, batch_idx: int):
         x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
         
+        if y.shape[1] > 1:
+            raise NotImplementedError('Multiple predicttion steps is not supported yet.')
+        
         #append 2d latitude to static variables
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
         static = torch.cat((static,lat2d_expanded), dim=1)
@@ -220,21 +227,22 @@ class GlobalForecastModule(LightningModule):
         in_variables = static_variables + ["lattitude"] + variables
 
         if inputs.shape[1] > 1:
-            raise NotImplementedError("history_range > 1 is not supported yet.")
-        inputs = inputs.squeeze() #squeeze history dimension
+            raise NotImplementedError("History_range > 1 is not supported yet.")
+        inputs = inputs.squeeze(1) #squeeze history dimension
 
         #divide lead_times by 100 following climaX
         lead_times = lead_times / 100
+        lead_times = lead_times.squeeze(1)
 
         preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
         
         #set y and preds to float32 for metric calculations
         preds = preds.float()
-        y = y.float()
+        y = y.float().squeeze(1)
 
         self.val_lat_weighted_mse.update(preds, y)
         self.val_lat_weighted_rmse.update(preds, y)
-        self.val_lat_weighted_acc.update(preds, y, output_timestamps)
+        self.val_lat_weighted_acc.update(preds, y, output_timestamps.squeeze(1))
         
     def on_validation_epoch_end(self):
         w_mse = self.val_lat_weighted_mse.compute()
@@ -257,6 +265,9 @@ class GlobalForecastModule(LightningModule):
     def test_step(self, batch: Any, batch_idx: int):
         x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
 
+        if y.shape[1] > 1:
+            raise NotImplementedError('Multiple predicttion steps is not supported yet.')
+
         #append 2d latitude to static variables
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
         static = torch.cat((static,lat2d_expanded), dim=1)
@@ -268,23 +279,24 @@ class GlobalForecastModule(LightningModule):
         in_variables = static_variables + ["lattitude"] + variables
 
         if inputs.shape[1] > 1:
-            raise NotImplementedError("history_range > 1 is not supported yet.")
-        inputs = inputs.squeeze() #squeeze history dimension
+            raise NotImplementedError("History_range > 1 is not supported yet.")
+        inputs = inputs.squeeze(1) #squeeze history dimension
 
         #divide lead_times by 100 following climaX
         lead_times = lead_times / 100
+        lead_times = lead_times.squeeze(1)
 
         preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
 
         #set y and preds to float32 for metric calculations
         preds = preds.float()
-        y = y.float()
+        y = y.float().squeeze(1)
         
         self.test_lat_weighted_mse.update(preds, y)
         self.test_lat_weighted_rmse.update(preds, y)
         self.test_lat_weighted_rmse_spatial_map.update(preds, y)
-        self.test_lat_weighted_acc.update(preds, y, output_timestamps)
-        self.test_lat_weighted_acc_spatial_map.update(preds, y, output_timestamps)
+        self.test_lat_weighted_acc.update(preds, y, output_timestamps.squeeze(1))
+        self.test_lat_weighted_acc_spatial_map.update(preds, y, output_timestamps.squeeze(1))
 
     def on_test_epoch_end(self):
         w_mse = self.test_lat_weighted_mse.compute()

@@ -23,8 +23,8 @@ class NpyReader(IterableDataset):
         out_variables (list): List of output variables.
         predict_size (int, optional): Length of outputs. Defaults to 1.
         predict_step (int, optional): Step size between outputs. Defaults to 1.
-        history_size (int, optional): Length of history. Defaults to 2.
-        history_step (int, optional): Step size of history. Defaults to 1.
+        history_size (int, optional): Length of history. Defaults to 1. Set to 0 to include only the current timestamp
+        history_step (int, optional): Step size between history elements. Defaults to 1.
         hrs_each_step (int, optional): Hours between consecutive steps. Defaults to 1.
         shuffle (bool, optional): Whether to shuffle the file list. Defaults to False.
         multi_dataset_training (bool, optional): Flag for multi-dataset training. Defaults to False.
@@ -40,7 +40,7 @@ class NpyReader(IterableDataset):
         out_variables,
         predict_size: int = 1,
         predict_step: int = 1,  
-        history_size: int = 2,
+        history_size: int = 1,
         history_step: int = 1,
         hrs_each_step: int = 1,
         shuffle: bool = False,
@@ -66,6 +66,8 @@ class NpyReader(IterableDataset):
         self.predict_range = self.predict_size * self.predict_step
         if self.history_size > 0:
             assert self.history_step > 0, "History step must be greater than 0 when including history"
+        if self.predict_size > 0:
+            assert self.predict_step > 0, "Predict step must be greater than 0 when forecasting"
 
     def __iter__(self):
         if self.shuffle:
@@ -113,7 +115,7 @@ class NpyReader(IterableDataset):
             for k in self.in_variables:
                 assert data_dict[k].shape[0] > (self.predict_range + self.history_range), f"Data shard with size {data_dict[k].shape[0]} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}"
 
-            if not self.shuffle and idx < iter_end - 1:
+            if not self.shuffle and idx < iter_end - 1 and (self.predict_range + self.history_range > 0):
                 self.carry_over_data = {k: data_dict[k][-(self.predict_range + self.history_range):] for k in self.in_variables}
                 self.carry_over_data['timestamps'] = timestamps[-(self.predict_range + self.history_range):]
             
@@ -149,10 +151,14 @@ class Forecast(IterableDataset):
             output_step = predict_step
             lead_times = []
             output_ids = []
-            while output_step <= predict_range:
-                lead_times.append(output_step * hrs_each_step)
-                output_ids.append(output_step + history_range)
-                output_step += predict_step
+            if predict_range == 0:
+                lead_times.append(0.0)
+                output_ids.append(history_range)
+            else:
+                while output_step <= predict_range:
+                    lead_times.append(output_step * hrs_each_step)
+                    output_ids.append(output_step + history_range)
+                    output_step += predict_step
             lead_times = torch.tensor(lead_times).unsqueeze(0).repeat(inputs.shape[0], 1)
             output_ids = torch.tensor(output_ids).repeat(inputs.shape[0], 1) + torch.arange(inputs.shape[0]).unsqueeze(1)
             outputs = y[output_ids]
