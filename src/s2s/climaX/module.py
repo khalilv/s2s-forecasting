@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 # credits: https://github.com/ashleve/lightning-hydra-template/blob/main/src/models/mnist_module.py
-from typing import Any
+from typing import Any, Callable
 import numpy as np
 import torch
 from pytorch_lightning import LightningModule
@@ -79,6 +79,9 @@ class GlobalForecastModule(LightningModule):
         self.drop_rate = drop_rate
         self.parallel_patch_embed = parallel_patch_embed
         self.denormalization = None
+        self.get_climatology = None
+        self.lat = None
+        self.lon = None
         self.plot_variables = []
         self.save_hyperparameters(logger=False, ignore=["net"])      
 
@@ -114,15 +117,17 @@ class GlobalForecastModule(LightningModule):
         print(msg)
     
     def init_metrics(self):
+        assert self.lat is not None, 'Latitude values not initialized yet.'
+        assert self.lon is not None, 'Longitude values not initialized yet.'
         self.train_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat)
         self.val_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, self.denormalization)
         self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, self.denormalization)
-        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.val_clim, self.val_clim_timestamps, self.denormalization)
+        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.denormalization)
         self.test_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, self.denormalization)        
-        self.test_lat_weighted_rmse_spatial_map = lat_weighted_rmse_spatial_map(self.out_variables, self.lat, self.denormalization)
+        self.test_lat_weighted_rmse_spatial_map = lat_weighted_rmse_spatial_map(self.out_variables, self.lat, (len(self.lat), len(self.lon)), self.denormalization)
         self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, self.denormalization)
-        self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.test_clim, self.test_clim_timestamps, self.denormalization)
-        self.test_lat_weighted_acc_spatial_map = lat_weighted_acc_spatial_map(self.out_variables, self.lat, self.test_clim, self.test_clim_timestamps, self.denormalization)
+        self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.denormalization)
+        self.test_lat_weighted_acc_spatial_map = lat_weighted_acc_spatial_map(self.out_variables, self.lat, (len(self.lat), len(self.lon)), self.denormalization)
 
     def init_network(self):
         variables = self.static_variables + ["lattitude"] + self.in_variables #climaX includes 2d latitude as an input field
@@ -147,6 +152,9 @@ class GlobalForecastModule(LightningModule):
         self.lat = lat
         self.lon = lon
     
+    def set_get_climatology_fn(self, get_climatology_fn: Callable):
+        self.get_climatology = get_climatology_fn
+    
     def set_lat2d(self, normalize: bool):
         self.lat2d = torch.from_numpy(np.tile(self.lat, (self.img_size[1], 1)).T).unsqueeze(0) #climaX includes 2d latitude as an input field
         if normalize:
@@ -157,14 +165,6 @@ class GlobalForecastModule(LightningModule):
         self.in_variables = in_variables
         self.static_variables = static_variables
         self.out_variables = out_variables
-
-    def set_val_clim(self, clim, timestamps):
-        self.val_clim = clim
-        self.val_clim_timestamps = timestamps
-
-    def set_test_clim(self, clim, timestamps):
-        self.test_clim = clim
-        self.test_clim_timestamps = timestamps
 
     def set_plot_variables(self, plot_variables: list):
         self.plot_variables = plot_variables
@@ -235,14 +235,18 @@ class GlobalForecastModule(LightningModule):
         lead_times = lead_times.squeeze(1)
 
         preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
-        
+
         #set y and preds to float32 for metric calculations
         preds = preds.float()
         y = y.float().squeeze(1)
 
         self.val_lat_weighted_mse.update(preds, y)
         self.val_lat_weighted_rmse.update(preds, y)
-        self.val_lat_weighted_acc.update(preds, y, output_timestamps.squeeze(1))
+
+        assert self.get_climatology is not None, 'Climatology is not initialized. Unable to calculate ACC metric'
+        climatology = self.get_climatology(self.out_variables, output_timestamps.squeeze(1), 'val')
+        climatology = torch.from_numpy(climatology).to(device=preds.device, dtype=preds.dtype)
+        self.val_lat_weighted_acc.update(preds, y, climatology)
         
     def on_validation_epoch_end(self):
         w_mse = self.val_lat_weighted_mse.compute()
@@ -295,8 +299,12 @@ class GlobalForecastModule(LightningModule):
         self.test_lat_weighted_mse.update(preds, y)
         self.test_lat_weighted_rmse.update(preds, y)
         self.test_lat_weighted_rmse_spatial_map.update(preds, y)
-        self.test_lat_weighted_acc.update(preds, y, output_timestamps.squeeze(1))
-        self.test_lat_weighted_acc_spatial_map.update(preds, y, output_timestamps.squeeze(1))
+
+        assert self.get_climatology is not None, 'Climatology is not initialized. Unable to calculate ACC metric'
+        climatology = self.get_climatology(self.out_variables, output_timestamps.squeeze(1), 'test')
+        climatology = torch.from_numpy(climatology).to(device=preds.device, dtype=preds.dtype)
+        self.test_lat_weighted_acc.update(preds, y, climatology)
+        self.test_lat_weighted_acc_spatial_map.update(preds, y, climatology)
 
     def on_test_epoch_end(self):
         w_mse = self.test_lat_weighted_mse.compute()

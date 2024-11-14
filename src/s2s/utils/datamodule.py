@@ -5,12 +5,11 @@ import os
 from typing import Optional
 import glob 
 import numpy as np
-import torch
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, IterableDataset
 from torchvision.transforms import transforms
 
-from s2s.utils.data_utils import collate_fn
+from s2s.utils.data_utils import collate_fn, remove_year
 from s2s.utils.dataset import (
     Forecast,
     IndividualForecastDataIter,
@@ -108,8 +107,8 @@ class GlobalForecastDataModule(LightningDataModule):
         self.output_transforms = transforms.Normalize(out_mean, out_std)
         self.static_transforms = transforms.Normalize(static_mean, static_std)
 
-        self.val_clim, self.val_clim_timestamps = self.get_climatology(self.out_variables, "val")
-        self.test_clim, self.test_clim_timestamps = self.get_climatology(self.out_variables, "test")
+        self.val_climatology_shards, self.val_climatology_timestamp_map = self.load_climatology("val")
+        self.test_climatology_shards, self.test_climatology_timestamp_map = self.load_climatology("test")
 
         self.data_train: Optional[IterableDataset] = None
         self.data_val: Optional[IterableDataset] = None
@@ -127,16 +126,43 @@ class GlobalForecastDataModule(LightningDataModule):
         lon = np.load(os.path.join(self.root_dir, "lon.npy"))
         return lat, lon
 
-    def get_climatology(self, variables, partition = ""):
-        files = glob.glob(os.path.join(self.root_dir, partition, "*climatology*.npz"))
-        assert len(files) == 1, f"Expected exactly one file in {partition} directory, but found {len(files)}"
-        path = files[0]
-        clim_dict = np.load(path)
-        clim = np.concatenate([clim_dict[var] for var in variables], axis=1)
-        clim = torch.from_numpy(clim)
-        timestamps = clim_dict['timestamps']
-        return clim, timestamps
-       
+    def load_climatology(self, partition = ""):
+        path = os.path.join(self.root_dir, partition, "*climatology*.npz")
+        files = sorted(glob.glob(path))
+        assert len(files) > 0, f"No climatology files found in {path}"
+        climatology_shards = {}
+        timestamp_map = {}
+        for file_id, file in enumerate(files):
+            shard = np.load(file, mmap_mode='r')
+            climatology_shards[file_id] = shard
+            timestamps = shard['timestamps']
+            for t_id, t in enumerate(timestamps):
+                timestamp_map[t] = (file_id, t_id)
+        return climatology_shards, timestamp_map
+    
+    def get_climatology(self, variables, timestamps, partition = ""):
+        if partition == 'val':
+            climatology_shards = self.val_climatology_shards
+            timestamp_map = self.val_climatology_timestamp_map
+        elif partition == 'test':
+            climatology_shards = self.test_climatology_shards
+            timestamp_map = self.test_climatology_timestamp_map
+        else:
+            raise ValueError(f"Invalid partition '{partition}' for climatology. Must be either 'val' or 'test'.")
+        
+        climatology = []
+        for timestamp in timestamps:
+            doy_tod = remove_year(timestamp)
+            if doy_tod in timestamp_map:
+                file_id, t_id = timestamp_map[doy_tod]
+                shard = climatology_shards[file_id]
+                data_point = np.concatenate([shard[var][t_id] for var in variables], axis=0)
+                climatology.append(data_point)
+            else:
+                raise KeyError(f"Timestamp {doy_tod} not found in climatology data.")
+        climatology = np.stack(climatology, axis=0)
+        return climatology
+
     def setup(self, stage: Optional[str] = None):
         # load datasets only if they're not loaded already
         if not self.data_train and not self.data_val and not self.data_test:
