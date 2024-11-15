@@ -199,7 +199,7 @@ class lat_weighted_rmse_spatial_map(Metric):
 class lat_weighted_acc(Metric):
     def __init__(self, vars, lat, transforms=None, suffix=None, **kwargs):
         super().__init__(**kwargs)
-        self.add_state("w_acc_over_hw_sum", default=[], dist_reduce_fx="cat")
+        self.add_state("w_acc_over_hw_sum", default=torch.zeros(len(vars)), dist_reduce_fx="sum")
         self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
 
         self.vars = vars
@@ -239,6 +239,7 @@ class lat_weighted_acc(Metric):
         loss_dict[loss_name] = torch.mean(torch.stack(list(loss_dict.values())))
         
         return loss_dict
+
     
 class lat_weighted_acc_spatial_map(Metric):
     def __init__(self, vars, lat, resolution, transforms=None, suffix=None, **kwargs):

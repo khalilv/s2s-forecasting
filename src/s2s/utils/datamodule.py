@@ -141,27 +141,40 @@ class GlobalForecastDataModule(LightningDataModule):
         return climatology_shards, timestamp_map
     
     def get_climatology(self, variables, timestamps, partition = ""):
-        if partition == 'val':
-            climatology_shards = self.val_climatology_shards
-            timestamp_map = self.val_climatology_timestamp_map
-        elif partition == 'test':
-            climatology_shards = self.test_climatology_shards
-            timestamp_map = self.test_climatology_timestamp_map
-        else:
-            raise ValueError(f"Invalid partition '{partition}' for climatology. Must be either 'val' or 'test'.")
-        
-        climatology = []
-        for timestamp in timestamps:
-            doy_tod = remove_year(timestamp)
-            if doy_tod in timestamp_map:
-                file_id, t_id = timestamp_map[doy_tod]
-                shard = climatology_shards[file_id]
-                data_point = np.concatenate([shard[var][t_id] for var in variables], axis=0)
-                climatology.append(data_point)
+            if partition == 'val':
+                climatology_shards = self.val_climatology_shards
+                timestamp_map = self.val_climatology_timestamp_map
+            elif partition == 'test':
+                climatology_shards = self.test_climatology_shards
+                timestamp_map = self.test_climatology_timestamp_map
             else:
-                raise KeyError(f"Timestamp {doy_tod} not found in climatology data.")
-        climatology = np.stack(climatology, axis=0)
-        return climatology
+                raise ValueError(f"Invalid partition '{partition}' for climatology. Must be either 'val' or 'test'.")
+            
+            climatology = []
+            climatology_timestamps = []
+            t_ids_per_file = {}
+            timestamps_year_removed = [remove_year(t) for t in timestamps]
+            for timestamp in timestamps_year_removed:
+                if timestamp in timestamp_map:
+                    file_id, t_id = timestamp_map[timestamp]
+                    if file_id in t_ids_per_file:
+                        t_ids_per_file[file_id].append(t_id)
+                    else:
+                        t_ids_per_file[file_id] = [t_id]
+                else:
+                    raise KeyError(f"Timestamp {timestamp} not found in climatology data.")
+            
+            for file_id in t_ids_per_file.keys():
+                shard = climatology_shards[file_id]
+                shard_data = np.concatenate([shard[var][t_ids_per_file[file_id]] for var in variables], axis=1)
+                climatology_timestamps.extend(shard['timestamps'][t_ids_per_file[file_id]])
+                climatology.append(shard_data)
+                
+            climatology = np.concatenate(climatology, axis=0)
+            timestamp_index_map = {t: i for i, t in enumerate(climatology_timestamps)}
+            ordered_indices = [timestamp_index_map[t] for t in timestamps_year_removed]
+            climatology = climatology[ordered_indices] 
+            return climatology
 
     def setup(self, stage: Optional[str] = None):
         # load datasets only if they're not loaded already

@@ -198,7 +198,7 @@ class GlobalForecastModule(LightningModule):
         
         #set y and preds to float32 for metric calculations
         preds = preds.float()
-        y = y.float().squeeze(1)
+        y = y.to(dtype=preds.dtype, device=preds.device).squeeze(1)
         
         batch_loss = self.train_lat_weighted_mse(preds, y)
         for var in batch_loss.keys():
