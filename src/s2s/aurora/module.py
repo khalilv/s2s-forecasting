@@ -83,6 +83,7 @@ class GlobalForecastModule(LightningModule):
         self.delta_time = None
         self.get_climatology = None
         self.plot_variables = []
+        self.flip_lat = False
         self.save_hyperparameters(logger=False, ignore=["net"])      
 
     
@@ -166,17 +167,17 @@ class GlobalForecastModule(LightningModule):
         #split surface and atmospheric data
         for i, v in enumerate(variables):
             if v in SURFACE_VARS:
-                surf_vars[AURORA_NAME_TO_VAR[v]] = torch.flip(x[:,:,i,:,:], dims=[-2])
+                surf_vars[AURORA_NAME_TO_VAR[v]] = torch.flip(x[:,:,i,:,:], dims=[-2]) if self.flip_lat else x[:,:,i,:,:]
             else:
                 atm_var = '_'.join(v.split('_')[:-1])
                 pressure_level = v.split('_')[-1]
                 assert pressure_level.isdigit(), f"Found invalid pressure level in {v}"
                 if atm_var in ATMOSPHERIC_VARS:
                     if AURORA_NAME_TO_VAR[atm_var] not in atmos_data:
-                        atmos_data[AURORA_NAME_TO_VAR[atm_var]] = [(int(pressure_level), torch.flip(x[:,:,i,:,:], dims=[-2]))]
+                        atmos_data[AURORA_NAME_TO_VAR[atm_var]] = [(int(pressure_level), torch.flip(x[:,:,i,:,:], dims=[-2]) if self.flip_lat else x[:,:,i,:,:])]
                         atmos_levels[AURORA_NAME_TO_VAR[atm_var]] = [int(pressure_level)]
                     else:
-                        atmos_data[AURORA_NAME_TO_VAR[atm_var]].append((int(pressure_level), torch.flip(x[:,:,i,:,:], dims=[-2])))
+                        atmos_data[AURORA_NAME_TO_VAR[atm_var]].append((int(pressure_level), torch.flip(x[:,:,i,:,:], dims=[-2]) if self.flip_lat else x[:,:,i,:,:]))
                         atmos_levels[AURORA_NAME_TO_VAR[atm_var]].append(int(pressure_level))
                 else:
                     raise ValueError(f"{v} could not be identified as a surface or atmospheric variable")  
@@ -201,14 +202,14 @@ class GlobalForecastModule(LightningModule):
         #format static variables
         for i, v in enumerate(static_variables):
             if v in STATIC_VARS:
-                static_vars[AURORA_NAME_TO_VAR[v]] = torch.flip(static[0,i,:,:], dims=[-2])
-        
+                static_vars[AURORA_NAME_TO_VAR[v]] = torch.flip(static[0,i,:,:], dims=[-2]) if self.flip_lat else static[0,i,:,:]
+ 
         return Batch(
             surf_vars=surf_vars,
             static_vars=static_vars,
             atmos_vars=atmos_vars,
             metadata=Metadata(
-                lat=torch.from_numpy(self.lat).flip(dims=[0]),
+                lat=torch.from_numpy(self.lat).flip(dims=[0]) if self.flip_lat else torch.from_numpy(self.lat),
                 lon=torch.from_numpy(self.lon),
                 time=tuple([datetime.fromisoformat(ts[-1]) for ts in input_timestamps]),
                 atmos_levels=atmos_levels,
@@ -221,14 +222,14 @@ class GlobalForecastModule(LightningModule):
         for v in variables:
             if v in SURFACE_VARS:
                 surf_data = batch.surf_vars[AURORA_NAME_TO_VAR[v]][:,0,:,:]
-                preds.append(torch.flip(surf_data, dims=[-2]))
+                preds.append(torch.flip(surf_data, dims=[-2]) if self.flip_lat else surf_data)
             else: 
                 atm_var = '_'.join(v.split('_')[:-1])
                 pressure_level = v.split('_')[-1]
                 assert pressure_level.isdigit(), f"Found invalid pressure level in {v}"
                 if atm_var in ATMOSPHERIC_VARS:
                     atm_data = batch.atmos_vars[AURORA_NAME_TO_VAR[atm_var]][:,0,batch.metadata.atmos_levels.index(int(pressure_level)),:,:]
-                    preds.append(torch.flip(atm_data, dims=[-2]))
+                    preds.append(torch.flip(atm_data, dims=[-2]) if self.flip_lat else surf_data)
                 else:
                     raise ValueError(f"{v} could not be identified as a surface or atmospheric variable")  
         preds = torch.stack(preds, dim=1) #(T, V, H, W)
@@ -237,6 +238,10 @@ class GlobalForecastModule(LightningModule):
     def set_lat_lon(self, lat, lon):
         self.lat = lat
         self.lon = lon
+        if self.lat[0] < self.lat[1]: #aurora expects latitudes in decreasing order
+            self.flip_lat = True
+            print('Found increasing latitudes. Aurora expects latitudes in decreasing order. Input data will be flipped along H axis, and output will be flipped back before computing metrics')
+
     
     def set_get_climatology_fn(self, get_climatology_fn: Callable):
         self.get_climatology = get_climatology_fn

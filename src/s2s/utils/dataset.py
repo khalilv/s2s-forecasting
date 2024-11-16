@@ -96,7 +96,7 @@ class NpyReader(IterableDataset):
             iter_start = worker_id * per_worker
             iter_end = iter_start + per_worker
         
-        static_data = np.load(self.static_variable_file)
+        static_data = np.load(self.static_variable_file, mmap_mode='r')
         static_data_dict = {k: static_data[k] for k in self.static_variables}
 
         #carry_over_data prevents needlessly throwing out data samples. 
@@ -104,7 +104,7 @@ class NpyReader(IterableDataset):
         self.carry_over_data = None 
         for idx in range(iter_start, iter_end):
             path = self.file_list[idx]
-            data = np.load(path)
+            data = np.load(path,  mmap_mode='r')
             data_dict  = {k: data[k] for k in self.in_variables}
             timestamps = data['timestamps']
             if self.carry_over_data is not None and not self.shuffle:
