@@ -1,9 +1,9 @@
 SURFACE_VARIABLES=(2m_temperature 10m_u_component_of_wind 10m_v_component_of_wind mean_sea_level_pressure total_precipitation_6hr)
-ATMOSPHERIC_VARIABLES=(geopotential u_component_of_wind v_component_of_wind temperature specific_humidity)
+ATMOSPHERIC_VARIABLES=(geopotential u_component_of_wind v_component_of_wind temperature specific_humidity relative_humidity)
 DIMENSIONS=(dayofyear hour latitude longitude level)
 METADATA=(.zattrs .zgroup .zmetadata)
-DATASET="1990-2019_6h_64x32_equiangular_with_poles_conservative.zarr"
-ROOT="/glade/derecho/scratch/kvirji/DATA/climatology"
+DATASET="1990-2017_6h_64x32_equiangular_conservative.zarr"
+ROOT="/glade/derecho/scratch/kvirji/DATA/era5_climatology"
 
 DATA=("${SURFACE_VARIABLES[@]}" "${ATMOSPHERIC_VARIABLES[@]}" "${DIMENSIONS[@]}")
 

@@ -10,38 +10,7 @@ from tqdm import tqdm
 import logging
 from s2s.utils.data_utils import DEFAULT_PRESSURE_LEVELS, HRS_PER_LEAP_YEAR, is_leap_year
 
-def zarr_climatology(path, variables, years, save_dir, partition, logger):
-    if not any(is_leap_year(year) for year in years):
-        logger.warning("WARNING: No leap year present in climatology years. This may result in issues when calculating ACC during evaluation as there will be no climatology for Feb 29th.")
-
-    os.makedirs(os.path.join(save_dir, partition), exist_ok=True)
-    zarr_ds = xr.open_zarr(path)
-    zarr_subset = zarr_ds.sel(time=slice(str(years[0]), str(years[-1])))
-    time_labels = zarr_subset.time.dt.strftime('%m-%dT%H:%M')
-    zarr_subset = zarr_subset.assign_coords(dayhour=time_labels)
-    climatology_ds = xr.Dataset()
-    for var in tqdm(variables):
-        if len(zarr_subset[var].shape) == 3:  # surface level variables
-            surf_data = zarr_subset[var]
-            surf_data_mean = surf_data.groupby("dayhour").mean("time").squeeze()
-            if surf_data_mean.dims[1:] == ("longitude", "latitude"):
-                surf_data_mean = surf_data_mean.transpose("dayhour", "latitude", "longitude")
-            climatology_ds[var] = surf_data_mean
-        else:
-            assert len(zarr_subset[var].shape) == 4
-            all_levels = zarr_subset["level"][:].compute().to_numpy()
-            all_levels = np.intersect1d(all_levels, DEFAULT_PRESSURE_LEVELS)
-            for level in all_levels:
-                atm_data = zarr_subset.sel(level=[level])[var]
-                atm_data_mean = atm_data.groupby("dayhour").mean("time").squeeze()
-                if atm_data_mean.dims[1:] == ("longitude", "latitude"):
-                    atm_data_mean = atm_data_mean.transpose("dayhour", "latitude", "longitude")               
-                climatology_ds[f"{var}_{int(level)}"] = atm_data_mean
-    climatology_output_path = os.path.join(save_dir, partition,  f"climatology_{years[0]}_{years[-1]}.zarr" if len(years) > 1 else f"climatology_{years[0]}.zarr")
-    climatology_ds.chunk('auto').to_zarr(climatology_output_path, mode="w")
-    
-
-def zarr_static(path, static_variables, save_dir):
+def process_static(path, static_variables, save_dir):
     os.makedirs(os.path.join(save_dir, "static"), exist_ok=True)
     zarr_ds = xr.open_zarr(path)
     static_ds = xr.Dataset()
@@ -66,7 +35,7 @@ def zarr_static(path, static_variables, save_dir):
     statistics_output_path = os.path.join(save_dir, "static", "statistics.zarr")
     statistics_ds.to_zarr(statistics_output_path, mode="w")
     
-def zarr_surf_atm(path, variables, years, save_dir, partition, num_shards_per_year, hrs_per_step):
+def process_surf_atm(path, variables, years, save_dir, partition, num_shards_per_year, hrs_per_step):
     os.makedirs(os.path.join(save_dir, partition), exist_ok=True)
     zarr_ds = xr.open_zarr(path)
 
@@ -191,7 +160,6 @@ def zarr_surf_atm(path, variables, years, save_dir, partition, num_shards_per_ye
 @click.option("--end_year", type=int, default=2019)
 @click.option("--num_shards", type=int, default=8)
 @click.option("--hrs_per_step", type=int, default=1)
-@click.option("--clim_start_year", type=int, default=1990)
 def main(
     root_dir,
     save_dir,
@@ -203,7 +171,6 @@ def main(
     end_year,
     num_shards,
     hrs_per_step,
-    clim_start_year,
 ):
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logger = logging.getLogger(__name__)
@@ -218,16 +185,11 @@ def main(
 
     os.makedirs(save_dir, exist_ok=True)
 
-    zarr_static(root_dir, static_variables, save_dir)
+    process_static(root_dir, static_variables, save_dir)
 
-    zarr_surf_atm(root_dir, variables, train_years, save_dir, "train", num_shards, hrs_per_step)
-    zarr_surf_atm(root_dir, variables, val_years, save_dir, "val", num_shards, hrs_per_step)
-    zarr_surf_atm(root_dir, variables, test_years, save_dir, "test", num_shards, hrs_per_step)
-
-    climatology_val_years = range(clim_start_year, start_val_year)
-    climatology_test_years = range(clim_start_year, start_test_year)
-    zarr_climatology(root_dir, variables, climatology_val_years, save_dir, "val", logger)
-    zarr_climatology(root_dir, variables, climatology_test_years, save_dir, "test", logger)
+    process_surf_atm(root_dir, variables, train_years, save_dir, "train", num_shards, hrs_per_step)
+    process_surf_atm(root_dir, variables, val_years, save_dir, "val", num_shards, hrs_per_step)
+    process_surf_atm(root_dir, variables, test_years, save_dir, "test", num_shards, hrs_per_step)
 
     # save lat and lon data
     zarr_ds = xr.open_zarr(root_dir)
