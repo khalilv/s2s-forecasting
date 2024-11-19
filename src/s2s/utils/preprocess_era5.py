@@ -37,7 +37,7 @@ def zarr_climatology(path, variables, years, save_dir, partition, logger):
                 if atm_data_mean.dims[1:] == ("longitude", "latitude"):
                     atm_data_mean = atm_data_mean.transpose("dayhour", "latitude", "longitude")               
                 climatology_ds[f"{var}_{int(level)}"] = atm_data_mean
-    climatology_output_path = os.path.join(save_dir, partition,  f"climatology_{years[0]}_{years[-1]}.npz" if len(years) > 1 else f"climatology_{years[0]}.npz")
+    climatology_output_path = os.path.join(save_dir, partition,  f"climatology_{years[0]}_{years[-1]}.zarr" if len(years) > 1 else f"climatology_{years[0]}.zarr")
     climatology_ds.chunk('auto').to_zarr(climatology_output_path, mode="w")
     
 
@@ -131,7 +131,7 @@ def zarr_surf_atm(path, variables, years, save_dir, partition, num_shards_per_ye
                                 statistics["mean"][f"{var}_{level}"].append([atm_var_mean, n_atm])
                                 statistics["std"][f"{var}_{level}"].append([atm_var_std, n_atm])
             
-            shard_output_path = os.path.join(save_dir, partition, f"{year}_shard_{shard_id}.zarr")
+            shard_output_path = os.path.join(save_dir, partition, f"{year}_{shard_id}.zarr")
             shard_ds.chunk('auto').to_zarr(shard_output_path, mode="w")
                
 
@@ -192,7 +192,6 @@ def zarr_surf_atm(path, variables, years, save_dir, partition, num_shards_per_ye
 @click.option("--num_shards", type=int, default=8)
 @click.option("--hrs_per_step", type=int, default=1)
 @click.option("--clim_start_year", type=int, default=1990)
-@click.option("--transpose", is_flag=True, type=bool, default=False)
 def main(
     root_dir,
     save_dir,
