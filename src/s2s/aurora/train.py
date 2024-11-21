@@ -24,7 +24,6 @@ def main():
     cli.model.update_normalization_stats(cli.datamodule.static_variables, *cli.datamodule.get_normalization_stats(cli.datamodule.static_variables, "static"))
     cli.model.set_lat_lon(*cli.datamodule.get_lat_lon())
     cli.model.set_variables(cli.datamodule.in_variables, cli.datamodule.static_variables, cli.datamodule.out_variables)
-    cli.model.set_get_climatology_fn(cli.datamodule.get_climatology)
     cli.model.set_delta_time(cli.datamodule.predict_step, cli.datamodule.hrs_each_step)
     cli.model.set_plot_variables(cli.datamodule.plot_variables)
     cli.model.init_metrics()
