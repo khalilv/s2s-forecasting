@@ -95,7 +95,20 @@ class ZarrReader(IterableDataset):
             if not self.shuffle and idx < iter_end - 1 and (self.predict_range + self.history_range > 0):
                 carry_over_data = data.isel(time=slice(-(self.predict_range + self.history_range),None))
             
-            yield data, static_data, climatology_data, self.in_variables, self.static_variables, self.out_variables, self.predict_range, self.predict_step, self.history_range, self.history_step, self.hrs_each_step
+            worker_info = torch.utils.data.get_worker_info()
+            if worker_info is None:
+                num_workers, worker_id = 1, 0
+            else:
+                num_workers, worker_id = worker_info.num_workers, worker_info.id
+
+            # split data across workers
+            timesteps_per_worker = len(data.time) // num_workers
+            assert timesteps_per_worker > (self.predict_range + self.history_range), f"Data shard per worker with size {timesteps_per_worker} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}. Decrease num_workers."
+            start_idx = worker_id * timesteps_per_worker
+            end_idx = len(data.time) if worker_id == num_workers - 1 else (worker_id + 1) * timesteps_per_worker
+            start_idx_plus_carry_over = max(start_idx - (self.predict_range + self.history_range), 0)
+            data_per_worker = data.isel(time=slice(start_idx_plus_carry_over, end_idx))
+            yield data_per_worker, static_data, climatology_data, self.in_variables, self.static_variables, self.out_variables, self.predict_range, self.predict_step, self.history_range, self.history_step, self.hrs_each_step
 
 
 class Forecast(IterableDataset):
