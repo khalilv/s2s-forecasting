@@ -177,8 +177,9 @@ data:
   history_size: 1
   history_step: 1
   hrs_each_step: 6
-  buffer_size: 10
+  buffer_size: 1000
   batch_size: 1
+  mem_load: 1.0
   num_workers: 0
   pin_memory: False
   normalize_data: False
