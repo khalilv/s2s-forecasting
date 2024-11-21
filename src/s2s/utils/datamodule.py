@@ -56,16 +56,13 @@ class GlobalForecastDataModule(LightningDataModule):
         history_step: int = 1,
         hrs_each_step: int = 1,
         batch_size: int = 64,
+        mem_load: float = 0.0,
         num_workers: int = 0,
         pin_memory: bool = False,
         normalize_data: bool = False,
     ):
         super().__init__()
-        if num_workers > 1:
-            raise NotImplementedError(
-                "num_workers > 1 is not supported yet. Performance will likely degrage too with larger num_workers."
-            )
-
+        
         # this line allows to access init params with 'self.hparams' attribute
         self.save_hyperparameters(logger=False)
         
@@ -97,6 +94,7 @@ class GlobalForecastDataModule(LightningDataModule):
         self.history_step = history_step
         self.hrs_each_step = hrs_each_step
         self.batch_size = batch_size
+        self.mem_load = mem_load
         self.num_workers = num_workers
         self.pin_memory = pin_memory
         self.normalize_data = normalize_data
@@ -153,6 +151,7 @@ class GlobalForecastDataModule(LightningDataModule):
                     in_transforms=self.in_transforms,
                     static_transforms=self.static_transforms,
                     output_transforms=self.output_transforms,
+                    mem_load=self.mem_load
                 ),
                 buffer_size=self.buffer_size,
             )
@@ -179,6 +178,7 @@ class GlobalForecastDataModule(LightningDataModule):
                 in_transforms=self.in_transforms,
                 static_transforms=self.static_transforms,
                 output_transforms=self.output_transforms,
+                mem_load=self.mem_load
             )
                 
 
@@ -204,6 +204,7 @@ class GlobalForecastDataModule(LightningDataModule):
                 in_transforms=self.in_transforms,
                 static_transforms=self.static_transforms,
                 output_transforms=self.output_transforms,
+                mem_load=self.mem_load
             )
 
     def train_dataloader(self):

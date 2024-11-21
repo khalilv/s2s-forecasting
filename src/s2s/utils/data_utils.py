@@ -97,28 +97,30 @@ def split_surface_atmospheric(variables: list):
     return surface_vars, atmospheric_vars
 
 def collate_fn(batch):
-    inp = torch.stack([batch[i][0] for i in range(len(batch))])
-    static = torch.stack([batch[i][1] for i in range(len(batch))])
-    out = torch.stack([batch[i][2] for i in range(len(batch))])
-    clim = torch.stack([batch[i][3] for i in range(len(batch))])
-    lead_times = torch.stack([batch[i][4] for i in range(len(batch))])
-    variables = batch[0][5]
-    static_variables = batch[0][6]
-    out_variables = batch[0][7]
-    input_timestamps = np.array([batch[i][8] for i in range(len(batch))])
-    output_timestamps = np.array([batch[i][9] for i in range(len(batch))])
+    batch = list(zip(*batch)) 
+    inp = torch.stack(batch[0])
+    static = torch.stack(batch[1])
+    out = torch.stack(batch[2])
+    clim = torch.stack(batch[3]) if batch[3][0] is not None else None
+    lead_times = torch.stack(batch[4])
+    variables = batch[5][0]
+    static_variables = batch[6][0]
+    out_variables = batch[7][0]
+    input_timestamps = np.array(batch[8])
+    output_timestamps = np.array(batch[9])
     return (
         inp,
         static,
         out,
         clim,
         lead_times,
-        [v for v in variables],
-        [s for s in static_variables],
-        [o for o in out_variables],
+        variables,
+        static_variables,
+        out_variables,
         input_timestamps,
-        output_timestamps
+        output_timestamps,
     )
+
 
 def leap_year_data_adjustment(data, hrs_per_step):
     leap_year_steps = HRS_PER_LEAP_YEAR // hrs_per_step
