@@ -272,7 +272,7 @@ class GlobalForecastModule(LightningModule):
         output_batch = rollout_batches[-1].to(self.device)
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
         
-        assert pred_timestamps == output_timestamps[:,-1] #these should be equal
+        assert (pred_timestamps == output_timestamps[:,-1]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,-1]}'
 
         target = y[:, -1]
 
@@ -306,7 +306,7 @@ class GlobalForecastModule(LightningModule):
         output_batch = rollout_batches[-1].to(self.device)
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
         
-        assert pred_timestamps == output_timestamps[:,-1] #these should be equal
+        assert (pred_timestamps == output_timestamps[:,-1]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,-1]}'
 
         target = y[:, -1]
         clim = climatology[:,-1]
@@ -357,7 +357,7 @@ class GlobalForecastModule(LightningModule):
         output_batch = rollout_batches[-1].to(self.device)
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
         
-        assert pred_timestamps == output_timestamps[:,-1] #these should be equal
+        assert (pred_timestamps == output_timestamps[:,-1]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,-1]}'
 
         target = y[:,-1] 
         clim = climatology[:,-1] 

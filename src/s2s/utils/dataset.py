@@ -108,6 +108,7 @@ class ZarrReader(IterableDataset):
             end_idx = len(data.time) if worker_id == num_workers - 1 else (worker_id + 1) * timesteps_per_worker
             start_idx_plus_carry_over = max(start_idx - (self.predict_range + self.history_range), 0)
             data_per_worker = data.isel(time=slice(start_idx_plus_carry_over, end_idx))
+            assert (data_per_worker.latitude.values == climatology_data.latitude.values).all(), f'Mismatch found between climatology latitudes [{climatology_data.latitude.values[0]},...{climatology_data.latitude.values[-1]}] and data latitudes [{data_per_worker.latitude.values[0]},...{data_per_worker.latitude.values[-1]}]. This will cause the wrong climatology values to be used when calculating ACC'
             yield data_per_worker, static_data, climatology_data, self.in_variables, self.static_variables, self.out_variables, self.predict_range, self.predict_step, self.history_range, self.history_step, self.hrs_each_step
 
 
