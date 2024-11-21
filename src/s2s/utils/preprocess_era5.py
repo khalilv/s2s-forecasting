@@ -116,7 +116,7 @@ def process_surf_atm(path, variables, years, save_dir, partition, num_shards_per
             statistics_ds[f"{var}_mean"] = xr.DataArray(agg_mean)
             statistics_ds[f"{var}_std"] = xr.DataArray(agg_std)
 
-        statistics_output_path = os.path.join(save_dir, partition, "statistics.zarr")
+        statistics_output_path = os.path.join(save_dir, "statistics.zarr")
         statistics_ds.to_zarr(statistics_output_path, mode="w")
 
 

@@ -4,13 +4,13 @@
 import math
 import os
 import random
-
+import xarray as xr
 import numpy as np
 import torch
 from torch.utils.data import IterableDataset
 
 
-class NpyReader(IterableDataset):
+class ZarrReader(IterableDataset):
     """Dataset for loading numpy files.
 
     Args:
@@ -21,6 +21,7 @@ class NpyReader(IterableDataset):
         in_variables (list): List of input variables.
         static_variables (list): List of static variables.
         out_variables (list): List of output variables.
+        climatology_file (str): Filepath to climatology (optional)
         predict_size (int, optional): Length of outputs. Defaults to 1.
         predict_step (int, optional): Step size between outputs. Defaults to 1.
         history_size (int, optional): Length of history. Defaults to 1. Set to 0 to include only the current timestamp
@@ -38,6 +39,7 @@ class NpyReader(IterableDataset):
         in_variables,
         static_variables,
         out_variables,
+        climatology_file: str = None,
         predict_size: int = 1,
         predict_step: int = 1,  
         history_size: int = 1,
@@ -51,6 +53,7 @@ class NpyReader(IterableDataset):
         end_idx = int(end_idx * len(file_list))
         file_list = file_list[start_idx:end_idx]
         self.file_list = [f for f in file_list if "climatology" not in f]
+        self.climatology_file = climatology_file
         self.static_variable_file = static_variable_file
         self.in_variables = in_variables
         self.static_variables = static_variables
@@ -96,78 +99,35 @@ class NpyReader(IterableDataset):
             iter_start = worker_id * per_worker
             iter_end = iter_start + per_worker
         
-        static_data = np.load(self.static_variable_file, mmap_mode='r')
-        static_data_dict = {k: static_data[k] for k in self.static_variables}
+        static_data = xr.open_zarr(self.static_variable_file, chunks='auto')
+        climatology_data = xr.open_zarr(self.climatology_file, chunks='auto') if self.climatology_file else None
 
         #carry_over_data prevents needlessly throwing out data samples. 
         #it will only be used if files have temporal ordering (i.e. shuffle=false)
         self.carry_over_data = None 
         for idx in range(iter_start, iter_end):
             path = self.file_list[idx]
-            data = np.load(path,  mmap_mode='r')
-            data_dict  = {k: data[k] for k in self.in_variables}
-            timestamps = data['timestamps']
+            data = xr.open_zarr(path, chunks='auto')
             if self.carry_over_data is not None and not self.shuffle:
-                for k in self.in_variables:
-                    data_dict[k] = np.concatenate([self.carry_over_data[k], data_dict[k]], axis=0)
-                timestamps = np.concatenate([self.carry_over_data['timestamps'], timestamps], axis=0)
-
-            for k in self.in_variables:
-                assert data_dict[k].shape[0] > (self.predict_range + self.history_range), f"Data shard with size {data_dict[k].shape[0]} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}"
+                data = xr.concat([self.carry_over_data, data], dim="time")
+            
+            assert len(data.time) > (self.predict_range + self.history_range), f"Data shard with size {len(data.time)} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}"
 
             if not self.shuffle and idx < iter_end - 1 and (self.predict_range + self.history_range > 0):
-                self.carry_over_data = {k: data_dict[k][-(self.predict_range + self.history_range):] for k in self.in_variables}
-                self.carry_over_data['timestamps'] = timestamps[-(self.predict_range + self.history_range):]
+                self.carry_over_data = data.isel(time=slice(-(self.predict_range + self.history_range),None))
             
-            yield data_dict, static_data_dict, self.in_variables, self.static_variables, self.out_variables, timestamps, self.predict_range, self.predict_step, self.history_range, self.history_step, self.hrs_each_step
+            yield data, static_data, climatology_data, self.in_variables, self.static_variables, self.out_variables, self.predict_range, self.predict_step, self.history_range, self.history_step, self.hrs_each_step
 
 
 class Forecast(IterableDataset):
     def __init__(
-        self, dataset: NpyReader, random_lead_time: bool = False
+        self, dataset: ZarrReader, 
+        normalize_data: bool, 
+        in_transforms: torch.nn.Module, 
+        static_transforms: torch.nn.Module, 
+        output_transforms: torch.nn.Module, 
+        region_info = None
     ) -> None:
-        super().__init__()
-        self.dataset = dataset
-        self.random_lead_time = random_lead_time
-
-    def __iter__(self):
-        for data, static_data, in_variables, static_variables, out_variables, timestamps, predict_range, predict_step, history_range, history_step, hrs_each_step in self.dataset:
-            x = np.concatenate([data[k].astype(np.float32) for k in data.keys()], axis=1) # T, V_in, H, W
-            x = torch.from_numpy(x)
-            y = np.concatenate([data[k].astype(np.float32) for k in out_variables], axis=1) # T, V_out, H, W
-            y = torch.from_numpy(y)
-            static = np.stack([static_data[k].astype(np.float32) for k in static_variables], axis=0) #V_static, H, W
-            static = torch.from_numpy(static)
-            
-            inputs = torch.empty((x.shape[0] - history_range  - predict_range, 
-                                  history_range // history_step + 1 if history_range > 0 else 1, x.shape[1], x.shape[2], x.shape[3])) #T, R, V, H, W where R = history size
-            input_timestamps = []
-
-            for t in range(history_range, x.shape[0] - predict_range):
-                inputs[t-history_range] = x[t-history_range:t+1:history_step if history_range > 0 else 1]
-                input_timestamps.append(timestamps[t-history_range:t+1:history_step if history_range > 0 else 1])
-            input_timestamps = np.array(input_timestamps)
-            
-            output_step = predict_step
-            lead_times = []
-            output_ids = []
-            if predict_range == 0:
-                lead_times.append(0.0)
-                output_ids.append(history_range)
-            else:
-                while output_step <= predict_range:
-                    lead_times.append(output_step * hrs_each_step)
-                    output_ids.append(output_step + history_range)
-                    output_step += predict_step
-            lead_times = torch.tensor(lead_times).unsqueeze(0).repeat(inputs.shape[0], 1)
-            output_ids = torch.tensor(output_ids).repeat(inputs.shape[0], 1) + torch.arange(inputs.shape[0]).unsqueeze(1)
-            outputs = y[output_ids]
-            output_timestamps = timestamps[output_ids]
-            yield inputs, static, outputs, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps
-
-
-class IndividualForecastDataIter(IterableDataset):
-    def __init__(self, dataset, normalize_data: bool, in_transforms: torch.nn.Module, static_transforms: torch.nn.Module, output_transforms: torch.nn.Module, region_info = None):
         super().__init__()
         self.dataset = dataset
         self.normalize_data = normalize_data
@@ -177,16 +137,36 @@ class IndividualForecastDataIter(IterableDataset):
         self.region_info = region_info
         if region_info is not None:
             raise NotImplementedError("Regional forecast is not supported yet.")
-
+        
     def __iter__(self):
-        for (inp, static, out, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps) in self.dataset:
-            assert inp.shape[0] == out.shape[0]
-            for i in range(inp.shape[0]):
-                if self.normalize_data:
-                    yield self.in_transforms(inp[i]), self.static_transforms(static), self.output_transforms(out[i]), lead_times[i], in_variables, static_variables, out_variables, input_timestamps[i], output_timestamps[i]
+        for data, static_data, climatology_data, in_variables, static_variables, out_variables, predict_range, predict_step, history_range, history_step, hrs_each_step in self.dataset:
+            static = static_data[static_variables].to_array().transpose('variable','latitude','longitude')
+            static = torch.tensor(static.values, dtype=torch.float32)
+            for t in range(history_range, len(data.time) - predict_range):
+                x = data[in_variables].isel(time=slice(t-history_range,t+1,history_step if history_range > 0 else 1)).to_array().transpose('time', 'variable', 'latitude', 'longitude')               
+                input = torch.tensor(x.values, dtype=torch.float32)
+                input_timestamps = np.array(x['time'].values)
+                if predict_range == 0:
+                    y = data[out_variables].isel(time=[t]).to_array().transpose('time', 'variable', 'latitude', 'longitude')               
+                    lead_times = torch.tensor([0], dtype=torch.float32)
                 else:
-                    yield inp[i], static, out[i], lead_times[i], in_variables, static_variables, out_variables, input_timestamps[i], output_timestamps[i]
-
+                    y = data[out_variables].isel(time=slice(t + predict_step, t + predict_step * (predict_range + 1), predict_step)).to_array().transpose('time', 'variable', 'latitude', 'longitude')
+                    lead_times = torch.tensor([hrs_each_step*step for step in range(predict_step, predict_step * (predict_range + 1), predict_step)], dtype=torch.float32)
+                output = torch.tensor(y.values, dtype=torch.float32)
+                output_timestamps = np.array(y['time'].values)
+                if climatology_data is not None:
+                    tod = np.array([ts.astype('datetime64[h]').astype(int) % 24 // hrs_each_step for ts in output_timestamps])
+                    doy = np.array([(np.datetime64(ts, 'D') - np.datetime64(f"{ts.astype('datetime64[Y]')}-01-01", 'D')).astype(int) for ts in output_timestamps])
+                    xr.DataArray(data=np.arange(len(tod)),dims=["pairs"])
+                    climatology = climatology_data[out_variables].isel(hour=("pairs", tod), dayofyear=("pairs",doy)).to_array().transpose('pairs', 'variable', 'latitude', 'longitude')
+                    climatology = torch.tensor(climatology.values, dtype=torch.float32)
+                else:
+                    climatology = None
+                    
+                if self.normalize_data:
+                    yield self.in_transforms(input), self.static_transforms(static), self.output_transforms(output), climatology, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps
+                else:
+                    yield input, static, output, climatology, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps
 
 class ShuffleIterableDataset(IterableDataset):
     def __init__(self, dataset, buffer_size: int) -> None:

@@ -2,9 +2,10 @@
 # Licensed under the MIT license.
 
 # credits: https://github.com/ashleve/lightning-hydra-template/blob/main/src/models/mnist_module.py
-from typing import Any, Callable
-from datetime import datetime
 import torch
+import numpy as np
+from typing import Any, Callable
+from datetime import datetime, timezone
 from pytorch_lightning import LightningModule
 from tqdm import tqdm
 from s2s.aurora.model.aurora import Aurora, AuroraSmall, AuroraHighRes
@@ -81,7 +82,6 @@ class GlobalForecastModule(LightningModule):
         self.surf_stats = {}
         self.atmos_stats = {}
         self.delta_time = None
-        self.get_climatology = None
         self.plot_variables = []
         self.flip_lat = False
         self.save_hyperparameters(logger=False, ignore=["net"])      
@@ -211,24 +211,24 @@ class GlobalForecastModule(LightningModule):
             metadata=Metadata(
                 lat=torch.from_numpy(self.lat).flip(dims=[0]) if self.flip_lat else torch.from_numpy(self.lat),
                 lon=torch.from_numpy(self.lon),
-                time=tuple([datetime.fromisoformat(ts[-1]) for ts in input_timestamps]),
+                time=tuple([datetime.fromtimestamp(ts[-1].astype(int), tz=timezone.utc) for ts in input_timestamps.astype('datetime64[s]')]),
                 atmos_levels=atmos_levels,
             )
         )
 
     def deconstruct_aurora_batch(self, batch: Batch, variables):
         preds = []
-        timestamps = [dt.strftime('%Y-%m-%dT%H:%M') for dt in batch.metadata.time]
+        timestamps = [np.datetime64(dt) for dt in batch.metadata.time]
         for v in variables:
             if v in SURFACE_VARS:
-                surf_data = batch.surf_vars[AURORA_NAME_TO_VAR[v]][:,0,:,:]
+                surf_data = batch.surf_vars[AURORA_NAME_TO_VAR[v]].squeeze(1)
                 preds.append(torch.flip(surf_data, dims=[-2]) if self.flip_lat else surf_data)
             else: 
                 atm_var = '_'.join(v.split('_')[:-1])
                 pressure_level = v.split('_')[-1]
                 assert pressure_level.isdigit(), f"Found invalid pressure level in {v}"
                 if atm_var in ATMOSPHERIC_VARS:
-                    atm_data = batch.atmos_vars[AURORA_NAME_TO_VAR[atm_var]][:,0,batch.metadata.atmos_levels.index(int(pressure_level)),:,:]
+                    atm_data = batch.atmos_vars[AURORA_NAME_TO_VAR[atm_var]].squeeze(1)[:,batch.metadata.atmos_levels.index(int(pressure_level)),:,:]
                     preds.append(torch.flip(atm_data, dims=[-2]) if self.flip_lat else surf_data)
                 else:
                     raise ValueError(f"{v} could not be identified as a surface or atmospheric variable")  
@@ -241,10 +241,6 @@ class GlobalForecastModule(LightningModule):
         if self.lat[0] < self.lat[1]: #aurora expects latitudes in decreasing order
             self.flip_lat = True
             print('Found increasing latitudes. Aurora expects latitudes in decreasing order. Input data will be flipped along H axis, and output will be flipped back before computing metrics')
-
-    
-    def set_get_climatology_fn(self, get_climatology_fn: Callable):
-        self.get_climatology = get_climatology_fn
 
     def set_plot_variables(self, plot_variables: list):
         self.plot_variables = plot_variables
@@ -283,7 +279,7 @@ class GlobalForecastModule(LightningModule):
         return batch_loss['w_mse']
     
     def validation_step(self, batch: Any, batch_idx: int):
-        x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
+        x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
         
         if not torch.all(lead_times == lead_times[0]):
             raise NotImplementedError("Variable lead times not implemented yet.")
@@ -300,10 +296,7 @@ class GlobalForecastModule(LightningModule):
         self.val_lat_weighted_mse.update(preds, y[:,-1])
         self.val_lat_weighted_rmse.update(preds, y[:,-1])
         
-        assert self.get_climatology is not None, 'Climatology is not initialized. Unable to calculate ACC metric'
-        climatology = self.get_climatology(self.out_variables, output_timestamps[:,-1], 'val')
-        climatology = torch.from_numpy(climatology).to(device=preds.device, dtype=preds.dtype)
-        self.val_lat_weighted_acc.update(preds, y[:,-1], climatology)
+        self.val_lat_weighted_acc.update(preds, y[:,-1], climatology[:,-1])
         
     def on_validation_epoch_end(self):
         w_mse = self.val_lat_weighted_mse.compute()
@@ -324,7 +317,8 @@ class GlobalForecastModule(LightningModule):
         self.val_lat_weighted_acc.reset()
 
     def test_step(self, batch: Any, batch_idx: int):
-        x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
+
+        x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
         
         if not torch.all(lead_times == lead_times[0]):
             raise NotImplementedError("Variable lead times not implemented yet.")
@@ -343,11 +337,8 @@ class GlobalForecastModule(LightningModule):
         self.test_lat_weighted_rmse.update(preds, y[:,-1])
         self.test_lat_weighted_rmse_spatial_map.update(preds, y[:,-1])
 
-        assert self.get_climatology is not None, 'Climatology is not initialized. Unable to calculate ACC metric'
-        climatology = self.get_climatology(self.out_variables, output_timestamps[:,-1], 'test')
-        climatology = torch.from_numpy(climatology).to(device=preds.device, dtype=preds.dtype)
-        self.test_lat_weighted_acc.update(preds, y[:,-1], climatology)
-        self.test_lat_weighted_acc_spatial_map.update(preds, y[:,-1], climatology)
+        self.test_lat_weighted_acc.update(preds, y[:,-1], climatology[:,-1])
+        self.test_lat_weighted_acc_spatial_map.update(preds, y[:,-1], climatology[:,-1])
 
     def on_test_epoch_end(self):
         w_mse = self.test_lat_weighted_mse.compute()

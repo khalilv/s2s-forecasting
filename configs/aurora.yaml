@@ -86,7 +86,9 @@ model:
 
 # ---------------------------- DATA -------------------------------------------
 data:
-  root_dir: /glade/derecho/scratch/kvirji/1959-2023_01_10-6h-64x32_equiangular_conservative_preprocessed_n_shards_4
+  root_dir: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5/1959-2023_01_10-6h-64x32_equiangular_conservative_n_shards_1
+  climatology_val: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5_climatology/1990-2017_6h_64x32_equiangular_conservative.zarr
+  climatology_test: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5_climatology/1990-2019_6h_64x32_equiangular_conservative.zarr
   static_variables: [
     "land_sea_mask",
     "geopotential_at_surface",
@@ -163,12 +165,13 @@ data:
       "specific_humidity_925",
       "specific_humidity_1000",
     ]
-  # predict_range (steps) * hrs_each_step = lead_time (hrs)
   plot_variables: [
       "2m_temperature",
       "geopotential_500",
       "temperature_850",
   ]
+  # [history_step * hrs_each_step * h = history timestamp (hrs)] for h in history_size 
+  # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
   predict_size: 1
   predict_step: 1
   history_size: 1

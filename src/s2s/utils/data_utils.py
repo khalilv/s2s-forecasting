@@ -100,16 +100,18 @@ def collate_fn(batch):
     inp = torch.stack([batch[i][0] for i in range(len(batch))])
     static = torch.stack([batch[i][1] for i in range(len(batch))])
     out = torch.stack([batch[i][2] for i in range(len(batch))])
-    lead_times = torch.stack([batch[i][3] for i in range(len(batch))])
-    variables = batch[0][4]
-    static_variables = batch[0][5]
-    out_variables = batch[0][6]
-    input_timestamps = np.array([batch[i][7] for i in range(len(batch))])
-    output_timestamps = np.array([batch[i][8] for i in range(len(batch))])
+    clim = torch.stack([batch[i][3] for i in range(len(batch))])
+    lead_times = torch.stack([batch[i][4] for i in range(len(batch))])
+    variables = batch[0][5]
+    static_variables = batch[0][6]
+    out_variables = batch[0][7]
+    input_timestamps = np.array([batch[i][8] for i in range(len(batch))])
+    output_timestamps = np.array([batch[i][9] for i in range(len(batch))])
     return (
         inp,
         static,
         out,
+        clim,
         lead_times,
         [v for v in variables],
         [s for s in static_variables],

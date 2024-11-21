@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import os
+import xarray as xr
 from typing import Optional
 import glob 
 import numpy as np
@@ -12,8 +13,7 @@ from torchvision.transforms import transforms
 from s2s.utils.data_utils import collate_fn, remove_year
 from s2s.utils.dataset import (
     Forecast,
-    IndividualForecastDataIter,
-    NpyReader,
+    ZarrReader,
     ShuffleIterableDataset,
 )
 
@@ -22,6 +22,8 @@ class GlobalForecastDataModule(LightningDataModule):
 
     Args:
         root_dir (str): Root directory for sharded data.
+        climatology_val (str): Path to zarr file for validation climatology.
+        climatology_test (str): Path to zarr file for test climatology.
         in_variables (list): List of input variables.
         static_variables (list): List of static variables.
         buffer_size (int): Buffer size for shuffling.
@@ -41,6 +43,8 @@ class GlobalForecastDataModule(LightningDataModule):
     def __init__(
         self,
         root_dir,
+        climatology_val,
+        climatology_test,
         in_variables,
         static_variables,
         buffer_size = 10000,
@@ -82,6 +86,8 @@ class GlobalForecastDataModule(LightningDataModule):
             self.plot_variables = plot_variables
 
         self.root_dir = root_dir
+        self.climatology_val = climatology_val
+        self.climatology_test = climatology_test
         self.in_variables = in_variables
         self.static_variables = static_variables
         self.buffer_size = buffer_size
@@ -98,7 +104,7 @@ class GlobalForecastDataModule(LightningDataModule):
         self.lister_train = sorted(glob.glob(os.path.join(self.root_dir, "train", "*")))
         self.lister_val = sorted(glob.glob(os.path.join(self.root_dir, "val", "*")))
         self.lister_test = sorted(glob.glob(os.path.join(self.root_dir, "test", "*")))
-        self.static_variable_file = os.path.join(self.root_dir, "static", "static.npz")
+        self.static_variable_file = os.path.join(self.root_dir, "static", "static.zarr")
 
         in_mean, in_std = self.get_normalization_stats(self.in_variables)
         out_mean, out_std = self.get_normalization_stats(self.out_variables)
@@ -107,18 +113,14 @@ class GlobalForecastDataModule(LightningDataModule):
         self.output_transforms = transforms.Normalize(out_mean, out_std)
         self.static_transforms = transforms.Normalize(static_mean, static_std)
 
-        self.val_climatology_shards, self.val_climatology_timestamp_map = self.load_climatology("val")
-        self.test_climatology_shards, self.test_climatology_timestamp_map = self.load_climatology("test")
-
         self.data_train: Optional[IterableDataset] = None
         self.data_val: Optional[IterableDataset] = None
         self.data_test: Optional[IterableDataset] = None
         
     def get_normalization_stats(self, variables, partition = ""):
-        normalize_mean = dict(np.load(os.path.join(self.root_dir, partition, "normalize_mean.npz")))
-        normalize_mean = np.array([normalize_mean[var] for var in variables])
-        normalize_std = dict(np.load(os.path.join(self.root_dir, partition, "normalize_std.npz")))
-        normalize_std = np.array([normalize_std[var] for var in variables])
+        statistics = xr.open_zarr(os.path.join(self.root_dir, partition, "statistics.zarr"), chunks='auto')
+        normalize_mean = np.array([statistics[f"{var}_mean"] for var in variables])
+        normalize_std = np.array([statistics[f"{var}_std"] for var in variables])
         return normalize_mean, normalize_std
 
     def get_lat_lon(self):
@@ -126,79 +128,26 @@ class GlobalForecastDataModule(LightningDataModule):
         lon = np.load(os.path.join(self.root_dir, "lon.npy"))
         return lat, lon
 
-    def load_climatology(self, partition = ""):
-        path = os.path.join(self.root_dir, partition, "*climatology*.npz")
-        files = sorted(glob.glob(path))
-        assert len(files) > 0, f"No climatology files found in {path}"
-        climatology_shards = {}
-        timestamp_map = {}
-        for file_id, file in enumerate(files):
-            shard = np.load(file, mmap_mode='r')
-            climatology_shards[file_id] = shard
-            timestamps = shard['timestamps']
-            for t_id, t in enumerate(timestamps):
-                timestamp_map[t] = (file_id, t_id)
-        return climatology_shards, timestamp_map
-    
-    def get_climatology(self, variables, timestamps, partition = ""):
-            if partition == 'val':
-                climatology_shards = self.val_climatology_shards
-                timestamp_map = self.val_climatology_timestamp_map
-            elif partition == 'test':
-                climatology_shards = self.test_climatology_shards
-                timestamp_map = self.test_climatology_timestamp_map
-            else:
-                raise ValueError(f"Invalid partition '{partition}' for climatology. Must be either 'val' or 'test'.")
-            
-            climatology = []
-            climatology_timestamps = []
-            t_ids_per_file = {}
-            timestamps_year_removed = [remove_year(t) for t in timestamps]
-            for timestamp in timestamps_year_removed:
-                if timestamp in timestamp_map:
-                    file_id, t_id = timestamp_map[timestamp]
-                    if file_id in t_ids_per_file:
-                        t_ids_per_file[file_id].append(t_id)
-                    else:
-                        t_ids_per_file[file_id] = [t_id]
-                else:
-                    raise KeyError(f"Timestamp {timestamp} not found in climatology data.")
-            
-            for file_id in t_ids_per_file.keys():
-                shard = climatology_shards[file_id]
-                shard_data = np.concatenate([shard[var][t_ids_per_file[file_id]] for var in variables], axis=1)
-                climatology_timestamps.extend(shard['timestamps'][t_ids_per_file[file_id]])
-                climatology.append(shard_data)
-                
-            climatology = np.concatenate(climatology, axis=0)
-            timestamp_index_map = {t: i for i, t in enumerate(climatology_timestamps)}
-            ordered_indices = [timestamp_index_map[t] for t in timestamps_year_removed]
-            climatology = climatology[ordered_indices] 
-            return climatology
-
     def setup(self, stage: Optional[str] = None):
         # load datasets only if they're not loaded already
         if not self.data_train and not self.data_val and not self.data_test:
             self.data_train = ShuffleIterableDataset(
-                IndividualForecastDataIter(
-                    Forecast(
-                        NpyReader(
-                            file_list=self.lister_train,
-                            static_variable_file=self.static_variable_file,
-                            start_idx=0,
-                            end_idx=1,
-                            in_variables=self.in_variables,
-                            static_variables=self.static_variables,
-                            out_variables=self.out_variables,
-                            shuffle=False,
-                            multi_dataset_training=False,
-                            predict_size=self.predict_size,
-                            predict_step=self.predict_step,
-                            history_size=self.history_size,
-                            history_step=self.history_step,
-                            hrs_each_step=self.hrs_each_step,
-                        ),
-                        random_lead_time=False,
+                Forecast(
+                    ZarrReader(
+                        file_list=self.lister_train,
+                        static_variable_file=self.static_variable_file,
+                        start_idx=0,
+                        end_idx=1,
+                        in_variables=self.in_variables,
+                        static_variables=self.static_variables,
+                        out_variables=self.out_variables,
+                        shuffle=False,
+                        multi_dataset_training=False,
+                        predict_size=self.predict_size,
+                        predict_step=self.predict_step,
+                        history_size=self.history_size,
+                        history_step=self.history_step,
+                        hrs_each_step=self.hrs_each_step,
                     ),
                     normalize_data = self.normalize_data,
                     in_transforms=self.in_transforms,
@@ -208,51 +157,48 @@ class GlobalForecastDataModule(LightningDataModule):
                 buffer_size=self.buffer_size,
             )
 
-            self.data_val = IndividualForecastDataIter(
-                Forecast(
-                    NpyReader(
-                        file_list=self.lister_val,
-                        static_variable_file=self.static_variable_file,
-                        start_idx=0,
-                        end_idx=1,
-                        in_variables=self.in_variables,
-                        static_variables=self.static_variables,
-                        out_variables=self.out_variables,
-                        shuffle=False,
-                        multi_dataset_training=False,
-                        predict_size=self.predict_size,
-                        predict_step=self.predict_step,
-                        history_size=self.history_size,
-                        history_step=self.history_step,
-                        hrs_each_step=self.hrs_each_step,
-                    ),
-                    random_lead_time=False,
+            self.data_val = Forecast(
+                ZarrReader(
+                    file_list=self.lister_val,
+                    climatology_file=self.climatology_val,
+                    static_variable_file=self.static_variable_file,
+                    start_idx=0,
+                    end_idx=1,
+                    in_variables=self.in_variables,
+                    static_variables=self.static_variables,
+                    out_variables=self.out_variables,
+                    shuffle=False,
+                    multi_dataset_training=False,
+                    predict_size=self.predict_size,
+                    predict_step=self.predict_step,
+                    history_size=self.history_size,
+                    history_step=self.history_step,
+                    hrs_each_step=self.hrs_each_step,
                 ),
                 normalize_data = self.normalize_data,
                 in_transforms=self.in_transforms,
                 static_transforms=self.static_transforms,
                 output_transforms=self.output_transforms,
             )
+                
 
-            self.data_test = IndividualForecastDataIter(
-                Forecast(
-                    NpyReader(
-                        file_list=self.lister_test,
-                        static_variable_file=self.static_variable_file,
-                        start_idx=0,
-                        end_idx=1,
-                        in_variables=self.in_variables,
-                        static_variables=self.static_variables,
-                        out_variables=self.out_variables,
-                        shuffle=False,
-                        multi_dataset_training=False,
-                        predict_size=self.predict_size,
-                        predict_step=self.predict_step,
-                        history_size=self.history_size,
-                        history_step=self.history_step,
-                        hrs_each_step=self.hrs_each_step,
-                    ),
-                    random_lead_time=False,
+            self.data_test = Forecast(
+                ZarrReader(
+                    file_list=self.lister_test,
+                    climatology_file=self.climatology_test,
+                    static_variable_file=self.static_variable_file,
+                    start_idx=0,
+                    end_idx=1,
+                    in_variables=self.in_variables,
+                    static_variables=self.static_variables,
+                    out_variables=self.out_variables,
+                    shuffle=False,
+                    multi_dataset_training=False,
+                    predict_size=self.predict_size,
+                    predict_step=self.predict_step,
+                    history_size=self.history_size,
+                    history_step=self.history_step,
+                    hrs_each_step=self.hrs_each_step,
                 ),
                 normalize_data = self.normalize_data,
                 in_transforms=self.in_transforms,
