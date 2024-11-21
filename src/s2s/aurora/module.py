@@ -84,6 +84,9 @@ class GlobalForecastModule(LightningModule):
         self.delta_time = None
         self.plot_variables = []
         self.flip_lat = False
+        self.test_resolution_warning_printed = False
+        self.val_resolution_warning_printed = False
+        self.train_resolution_warning_printed = False
         self.save_hyperparameters(logger=False, ignore=["net"])      
 
     
@@ -257,18 +260,29 @@ class GlobalForecastModule(LightningModule):
         self.out_surface_variables, self.out_atmospheric_variables = split_surface_atmospheric(out_variables)
     
     def training_step(self, batch: Any, batch_idx: int):
-        x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch #spread batch data 
+        x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch #spread batch data 
         
         if not torch.all(lead_times == lead_times[0]):
             raise NotImplementedError("Variable lead times not implemented yet.")
 
         input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
-        output_batch = self.net.forward(input_batch)
-        preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)
         
-        assert pred_timestamps == output_timestamps #these should always be equal
+        rollout_steps = y.shape[1]
+        rollout_batches = [rollout_batch.to("cpu") for rollout_batch in rollout(self.net, input_batch, steps=rollout_steps)]
+        output_batch = rollout_batches[-1].to(self.device)
+        preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
         
-        batch_loss = self.train_lat_weighted_mse(preds, y)
+        assert pred_timestamps == output_timestamps[:,-1] #these should be equal
+
+        target = y[:, -1]
+
+        if target.shape[-2:] != preds.shape[-2:]:
+            if not self.train_resolution_warning_printed:
+                print(f'Warning: Found mismatch in resolutions target: {target.shape}, prediction: {preds.shape}. Subsetting target to match preds.')
+                self.train_resolution_warning_printed = True
+            target = target[..., :preds.shape[-2], :preds.shape[-1]]
+        
+        batch_loss = self.train_lat_weighted_mse(preds, target)
         for var in batch_loss.keys():
             self.log(
                 "train/" + var,
@@ -293,12 +307,25 @@ class GlobalForecastModule(LightningModule):
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
         
         assert pred_timestamps == output_timestamps[:,-1] #these should be equal
-        self.val_lat_weighted_mse.update(preds, y[:,-1])
-        self.val_lat_weighted_rmse.update(preds, y[:,-1])
+
+        target = y[:, -1]
+        clim = climatology[:,-1]
+
+        if target.shape[-2:] != preds.shape[-2:]:
+            if not self.val_resolution_warning_printed:
+                print(f'Warning: Found mismatch in resolutions target: {target.shape}, prediction: {preds.shape}. Subsetting target to match preds.')
+                self.val_resolution_warning_printed = True
+            target = target[..., :preds.shape[-2], :preds.shape[-1]]
+            clim = clim[..., :preds.shape[-2], :preds.shape[-1]]
+
+        self.val_lat_weighted_mse.update(preds, target)
+        self.val_lat_weighted_rmse.update(preds, target)
         
-        self.val_lat_weighted_acc.update(preds, y[:,-1], climatology[:,-1])
+        self.val_lat_weighted_acc.update(preds, target, clim)
         
     def on_validation_epoch_end(self):
+        self.val_resolution_warning_printed = False
+        self.train_resolution_warning_printed = False
         w_mse = self.val_lat_weighted_mse.compute()
         w_rmse = self.val_lat_weighted_rmse.compute()
         w_acc = self.val_lat_weighted_acc.compute()
@@ -317,7 +344,6 @@ class GlobalForecastModule(LightningModule):
         self.val_lat_weighted_acc.reset()
 
     def test_step(self, batch: Any, batch_idx: int):
-
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
         
         if not torch.all(lead_times == lead_times[0]):
@@ -331,16 +357,27 @@ class GlobalForecastModule(LightningModule):
         output_batch = rollout_batches[-1].to(self.device)
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
         
-        assert pred_timestamps == output_timestamps[:,-1] #these should be equal       
-                      
-        self.test_lat_weighted_mse.update(preds, y[:,-1])
-        self.test_lat_weighted_rmse.update(preds, y[:,-1])
-        self.test_lat_weighted_rmse_spatial_map.update(preds, y[:,-1])
+        assert pred_timestamps == output_timestamps[:,-1] #these should be equal
 
-        self.test_lat_weighted_acc.update(preds, y[:,-1], climatology[:,-1])
-        self.test_lat_weighted_acc_spatial_map.update(preds, y[:,-1], climatology[:,-1])
+        target = y[:,-1] 
+        clim = climatology[:,-1] 
+
+        if target.shape[-2:] != preds.shape[-2:]:
+            if not self.test_resolution_warning_printed:
+                print(f'Warning: Found mismatch in resolutions target: {target.shape}, prediction: {preds.shape}. Subsetting target to match preds.')
+                self.test_resolution_warning_printed = True
+            target = target[..., :preds.shape[-2], :preds.shape[-1]]
+            clim = clim[..., :preds.shape[-2], :preds.shape[-1]]
+                      
+        self.test_lat_weighted_mse.update(preds, target)
+        self.test_lat_weighted_rmse.update(preds, target)
+        self.test_lat_weighted_rmse_spatial_map.update(preds, target)
+
+        self.test_lat_weighted_acc.update(preds, target, clim)
+        self.test_lat_weighted_acc_spatial_map.update(preds, target, clim)
 
     def on_test_epoch_end(self):
+        self.test_resolution_warning_printed = False
         w_mse = self.test_lat_weighted_mse.compute()
         w_rmse = self.test_lat_weighted_rmse.compute()
         w_acc = self.test_lat_weighted_acc.compute()

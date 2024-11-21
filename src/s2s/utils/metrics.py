@@ -76,6 +76,7 @@ class lat_weighted_mse(Metric):
         super().__init__(**kwargs)
         self.add_state("w_mse_over_hw_sum", default=torch.zeros(len(vars)), dist_reduce_fx="sum")
         self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
+        self.add_state("warning_printed", default=torch.tensor(False), dist_reduce_fx=None)
 
         self.vars = vars
         self.lat = lat
@@ -89,6 +90,12 @@ class lat_weighted_mse(Metric):
 
 
     def update(self, preds: torch.Tensor, targets: torch.Tensor):
+        if self.w_lat.shape[-2] != preds.shape[-2]:
+            if not self.warning_printed:
+                print(f'Warning: Found mismatch in resolutions w_lat: {self.w_lat.shape[-2]}, prediction: {preds.shape[-2]}. Subsetting w_lat to match preds.')
+                self.warning_printed = True
+                self.w_lat = self.w_lat[..., :preds.shape[-2], :]
+            
         if self.transforms is not None:
             preds = self.transforms(preds)
             targets = self.transforms(targets) 
@@ -118,6 +125,7 @@ class lat_weighted_rmse(Metric):
         super().__init__(**kwargs)
         self.add_state("w_mse_over_hw_sum", default=torch.zeros(len(vars)), dist_reduce_fx="sum")
         self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
+        self.add_state("warning_printed", default=torch.tensor(False), dist_reduce_fx=None)
 
         self.vars = vars
         self.lat = lat
@@ -131,6 +139,12 @@ class lat_weighted_rmse(Metric):
 
 
     def update(self, preds: torch.Tensor, targets: torch.Tensor):
+        if self.w_lat.shape[-2] != preds.shape[-2]:
+            if not self.warning_printed:
+                print(f'Warning: Found mismatch in resolutions w_lat: {self.w_lat.shape[-2]}, prediction: {preds.shape[-2]}. Subsetting w_lat to match preds.')
+                self.warning_printed = True
+                self.w_lat = self.w_lat[..., :preds.shape[-2], :]
+
         if self.transforms is not None:
             preds = self.transforms(preds)
             targets = self.transforms(targets) 
@@ -162,6 +176,7 @@ class lat_weighted_rmse_spatial_map(Metric):
 
         self.add_state("w_mse_spatial_map_sum", default=torch.zeros(len(vars),resolution[0], resolution[1]), dist_reduce_fx="sum")
         self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
+        self.add_state("warning_printed", default=torch.tensor(False), dist_reduce_fx=None)
 
         self.vars = vars
         self.lat = lat
@@ -174,6 +189,13 @@ class lat_weighted_rmse_spatial_map(Metric):
         self.register_buffer("w_lat", torch.from_numpy(w_lat).view(1, 1, -1, 1))  # Shape (1, 1, H, 1)
 
     def update(self, preds: torch.Tensor, targets: torch.Tensor):
+        if self.w_lat.shape[-2] != preds.shape[-2]:
+            if not self.warning_printed:
+                print(f'Warning: Found mismatch in resolutions w_lat: {self.w_lat.shape[-2]}, prediction: {preds.shape[-2]}. Subsetting w_lat to match preds.')
+                self.warning_printed = True
+                self.w_lat = self.w_lat[..., :preds.shape[-2], :]
+                self.w_mse_spatial_map_sum = self.w_mse_spatial_map_sum[..., :preds.shape[-2], :]
+
         if self.transforms is not None:
             preds = self.transforms(preds)
             targets = self.transforms(targets) 
@@ -201,6 +223,7 @@ class lat_weighted_acc(Metric):
         super().__init__(**kwargs)
         self.add_state("w_acc_over_hw_sum", default=torch.zeros(len(vars)), dist_reduce_fx="sum")
         self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
+        self.add_state("warning_printed", default=torch.tensor(False), dist_reduce_fx=None)
 
         self.vars = vars
         self.lat = lat
@@ -213,6 +236,12 @@ class lat_weighted_acc(Metric):
         self.register_buffer("w_lat", torch.from_numpy(w_lat).view(1, 1, -1, 1))  # Shape (1, 1, H, 1)
 
     def update(self, preds: torch.Tensor, targets: torch.Tensor, climatology: torch.Tensor):
+        if self.w_lat.shape[-2] != preds.shape[-2]:
+            if not self.warning_printed:
+                print(f'Warning: Found mismatch in resolutions w_lat: {self.w_lat.shape[-2]}, prediction: {preds.shape[-2]}. Subsetting w_lat to match preds.')
+                self.warning_printed = True
+                self.w_lat = self.w_lat[..., :preds.shape[-2], :]
+
         assert preds.shape == climatology.shape
         if self.transforms is not None:
             preds = self.transforms(preds)
@@ -249,6 +278,7 @@ class lat_weighted_acc_spatial_map(Metric):
         self.add_state("w_acc_spatial_map_sum_tp", default=torch.zeros(len(vars),resolution[0], resolution[1]), dist_reduce_fx="sum")
         self.add_state("w_acc_spatial_map_sum_pp", default=torch.zeros(len(vars),resolution[0], resolution[1]), dist_reduce_fx="sum")
         self.add_state("w_acc_spatial_map_sum_tt", default=torch.zeros(len(vars),resolution[0], resolution[1]), dist_reduce_fx="sum")
+        self.add_state("warning_printed", default=torch.tensor(False), dist_reduce_fx=None)
         
         self.vars = vars
         self.lat = lat
@@ -261,6 +291,16 @@ class lat_weighted_acc_spatial_map(Metric):
         self.register_buffer("w_lat", torch.from_numpy(w_lat).view(1, 1, -1, 1))  # Shape (1, 1, H, 1)
 
     def update(self, preds: torch.Tensor, targets: torch.Tensor, climatology: torch.Tensor):
+        if self.w_lat.shape[-2] != preds.shape[-2]:
+            if not self.warning_printed:
+                print(f'Warning: Found mismatch in resolutions w_lat: {self.w_lat.shape[-2]}, prediction: {preds.shape[-2]}. Subsetting w_lat to match preds.')
+                self.warning_printed = True
+                self.w_lat = self.w_lat[..., :preds.shape[-2], :]
+                self.w_acc_spatial_map_sum_tp = self.w_acc_spatial_map_sum_tp[..., :preds.shape[-2], :]
+                self.w_acc_spatial_map_sum_pp = self.w_acc_spatial_map_sum_pp[..., :preds.shape[-2], :]
+                self.w_acc_spatial_map_sum_tt = self.w_acc_spatial_map_sum_tt[..., :preds.shape[-2], :]
+
+
         assert preds.shape == climatology.shape
         if self.transforms is not None:
             preds = self.transforms(preds)
