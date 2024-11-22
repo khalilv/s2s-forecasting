@@ -14,8 +14,8 @@ from s2s.utils.metrics import (
     lat_weighted_acc,
     lat_weighted_mse,
     lat_weighted_rmse,
-    lat_weighted_acc_spatial_map,
-    lat_weighted_rmse_spatial_map
+    acc_spatial_map,
+    rmse_spatial_map
 )
 from s2s.climaX.pos_embed import interpolate_pos_embed
 from s2s.utils.data_utils import plot_spatial_map_with_basemap
@@ -123,10 +123,10 @@ class GlobalForecastModule(LightningModule):
         self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, self.denormalization)
         self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.denormalization)
         self.test_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, self.denormalization)        
-        self.test_lat_weighted_rmse_spatial_map = lat_weighted_rmse_spatial_map(self.out_variables, self.lat, (len(self.lat), len(self.lon)), self.denormalization)
+        self.test_rmse_spatial_map = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), self.denormalization)
         self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, self.denormalization)
         self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.denormalization)
-        self.test_lat_weighted_acc_spatial_map = lat_weighted_acc_spatial_map(self.out_variables, self.lat, (len(self.lat), len(self.lon)), self.denormalization)
+        self.test_acc_spatial_map = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), self.denormalization)
 
     def init_network(self):
         variables = self.static_variables + ["lattitude"] + self.in_variables #climaX includes 2d latitude as an input field
@@ -293,17 +293,17 @@ class GlobalForecastModule(LightningModule):
         
         self.test_lat_weighted_mse.update(preds, y)
         self.test_lat_weighted_rmse.update(preds, y)
-        self.test_lat_weighted_rmse_spatial_map.update(preds, y)
+        self.test_rmse_spatial_map.update(preds, y)
 
         self.test_lat_weighted_acc.update(preds, y, climatology)
-        self.test_lat_weighted_acc_spatial_map.update(preds, y, climatology)
+        self.test_acc_spatial_map.update(preds, y, climatology)
 
     def on_test_epoch_end(self):
         w_mse = self.test_lat_weighted_mse.compute()
         w_rmse = self.test_lat_weighted_rmse.compute()
         w_acc = self.test_lat_weighted_acc.compute()
-        w_rmse_spatial_maps = self.test_lat_weighted_rmse_spatial_map.compute()
-        w_acc_spatial_maps = self.test_lat_weighted_acc_spatial_map.compute()
+        rmse_spatial_maps = self.test_rmse_spatial_map.compute()
+        acc_spatial_maps = self.test_acc_spatial_map.compute()
 
         #scalar metrics
         loss_dict = {**w_mse, **w_rmse, **w_acc}
@@ -317,19 +317,19 @@ class GlobalForecastModule(LightningModule):
 
          #spatial maps
         for plot_var in tqdm(self.plot_variables, desc="Plotting RMSE spatial maps"):
-            for var in w_rmse_spatial_maps.keys():
+            for var in rmse_spatial_maps.keys():
                 if plot_var in var:
-                    plot_spatial_map_with_basemap(data=w_rmse_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+                    plot_spatial_map_with_basemap(data=rmse_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
         for plot_var in tqdm(self.plot_variables, desc="Plotting ACC spatial maps"):
-            for var in w_acc_spatial_maps.keys():
+            for var in acc_spatial_maps.keys():
                 if plot_var in var:
-                    plot_spatial_map_with_basemap(data=w_acc_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+                    plot_spatial_map_with_basemap(data=acc_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
 
         self.test_lat_weighted_mse.reset()
         self.test_lat_weighted_rmse.reset()
         self.test_lat_weighted_acc.reset()
-        self.test_lat_weighted_acc_spatial_map.reset()
-        self.test_lat_weighted_rmse_spatial_map.reset()
+        self.test_acc_spatial_map.reset()
+        self.test_rmse_spatial_map.reset()
 
     #optimizer definition - will be used to optimize the network based
     def configure_optimizers(self):

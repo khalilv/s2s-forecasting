@@ -16,8 +16,8 @@ from s2s.utils.metrics import (
     lat_weighted_acc,
     lat_weighted_mse,
     lat_weighted_rmse,
-    lat_weighted_acc_spatial_map,
-    lat_weighted_rmse_spatial_map
+    acc_spatial_map,
+    rmse_spatial_map
 )
 from s2s.utils.data_utils import plot_spatial_map_with_basemap, split_surface_atmospheric, AURORA_NAME_TO_VAR, SURFACE_VARS, ATMOSPHERIC_VARS, STATIC_VARS
 #3) Global forecast module - abstraction for training/validation/testing steps. setup for the module including hyperparameters is included here
@@ -100,10 +100,10 @@ class GlobalForecastModule(LightningModule):
         self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, None)
         self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, None)
         self.test_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, None)        
-        self.test_lat_weighted_rmse_spatial_map = lat_weighted_rmse_spatial_map(self.out_variables, self.lat, (len(self.lat), len(self.lon)), None)
+        self.test_rmse_spatial_map = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), None)
         self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, None)
         self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, None)
-        self.test_lat_weighted_acc_spatial_map = lat_weighted_acc_spatial_map(self.out_variables, self.lat, (len(self.lat), len(self.lon)), None)
+        self.test_acc_spatial_map = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), None)
 
     def init_network(self):
         assert self.delta_time is not None, 'delta_time hyperparameter must be set before initializing model'
@@ -115,8 +115,8 @@ class GlobalForecastModule(LightningModule):
                 surf_vars=surf_vars,
                 static_vars=static_vars,
                 atmos_vars=atmos_vars,
-                surf_stats=self.surf_stats,
-                atmos_stats=self.atmos_stats,
+                # surf_stats=self.surf_stats,
+                # atmos_stats=self.atmos_stats,
                 delta_time=self.delta_time
             )
         elif self.version == 1:
@@ -124,8 +124,8 @@ class GlobalForecastModule(LightningModule):
                 surf_vars=surf_vars,
                 static_vars=static_vars,
                 atmos_vars=atmos_vars,
-                surf_stats=self.surf_stats,
-                atmos_stats=self.atmos_stats,
+                # surf_stats=self.surf_stats,
+                # atmos_stats=self.atmos_stats,
                 delta_time=self.delta_time
 
             )
@@ -133,8 +133,8 @@ class GlobalForecastModule(LightningModule):
             self.net = AuroraHighRes(
                 surf_vars=surf_vars,
                 static_vars=static_vars,
-                surf_stats=self.surf_stats,
-                atmos_stats=self.atmos_stats,
+                # surf_stats=self.surf_stats,
+                # atmos_stats=self.atmos_stats,
                 delta_time=self.delta_time
             )
         else:
@@ -373,18 +373,18 @@ class GlobalForecastModule(LightningModule):
                       
         self.test_lat_weighted_mse.update(preds, target)
         self.test_lat_weighted_rmse.update(preds, target)
-        self.test_lat_weighted_rmse_spatial_map.update(preds, target)
+        self.test_rmse_spatial_map.update(preds, target)
 
         self.test_lat_weighted_acc.update(preds, target, clim)
-        self.test_lat_weighted_acc_spatial_map.update(preds, target, clim)
+        self.test_acc_spatial_map.update(preds, target, clim)
 
     def on_test_epoch_end(self):
         self.test_resolution_warning_printed = False
         w_mse = self.test_lat_weighted_mse.compute()
         w_rmse = self.test_lat_weighted_rmse.compute()
         w_acc = self.test_lat_weighted_acc.compute()
-        w_rmse_spatial_maps = self.test_lat_weighted_rmse_spatial_map.compute()
-        w_acc_spatial_maps = self.test_lat_weighted_acc_spatial_map.compute()
+        rmse_spatial_maps = self.test_rmse_spatial_map.compute()
+        acc_spatial_maps = self.test_acc_spatial_map.compute()
 
         #scalar metrics
         loss_dict = {**w_mse, **w_rmse, **w_acc}
@@ -398,19 +398,19 @@ class GlobalForecastModule(LightningModule):
 
         #spatial maps
         for plot_var in tqdm(self.plot_variables, desc="Plotting RMSE spatial maps"):
-            for var in w_rmse_spatial_maps.keys():
+            for var in rmse_spatial_maps.keys():
                 if plot_var in var:
-                    plot_spatial_map_with_basemap(data=w_rmse_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+                    plot_spatial_map_with_basemap(data=rmse_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
         for plot_var in tqdm(self.plot_variables, desc="Plotting ACC spatial maps"):
-            for var in w_acc_spatial_maps.keys():
+            for var in acc_spatial_maps.keys():
                 if plot_var in var:
-                    plot_spatial_map_with_basemap(data=w_acc_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+                    plot_spatial_map_with_basemap(data=acc_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
 
         self.test_lat_weighted_mse.reset()
         self.test_lat_weighted_rmse.reset()
         self.test_lat_weighted_acc.reset()
-        self.test_lat_weighted_acc_spatial_map.reset()
-        self.test_lat_weighted_rmse_spatial_map.reset()
+        self.test_acc_spatial_map.reset()
+        self.test_rmse_spatial_map.reset()
 
     #optimizer definition - will be used to optimize the network based
     def configure_optimizers(self):
