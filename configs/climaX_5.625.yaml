@@ -153,9 +153,9 @@ data:
   history_size: 0
   history_step: 0
   hrs_each_step: 6
-  buffer_size: 10000
+  buffer_size: 1000
   batch_size: 1
-  mem_load: 0.5
-  num_workers: 0
+  mem_load: 1.0
+  num_workers: 2
   pin_memory: False
   normalize_data: True
