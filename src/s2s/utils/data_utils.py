@@ -225,7 +225,7 @@ def plot_spatial_map_with_basemap(data, lon, lat, title=None, filename=None, zla
                 llcrnrlon=-180, urcrnrlon=180, ax=ax)
     m.drawcoastlines()
 
-    lon[lon >= 180] -= 360
+    lon = np.where(lon >= 180, lon - 360, lon)
     lon = np.roll(lon, int(len(lon) / 2))
     data = np.roll(data, int(len(lon) / 2), axis=1)
     

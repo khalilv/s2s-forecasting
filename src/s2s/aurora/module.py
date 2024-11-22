@@ -379,7 +379,6 @@ class GlobalForecastModule(LightningModule):
         self.test_acc_spatial_map.update(preds, target, clim)
 
     def on_test_epoch_end(self):
-        self.test_resolution_warning_printed = False
         w_mse = self.test_lat_weighted_mse.compute()
         w_rmse = self.test_lat_weighted_rmse.compute()
         w_acc = self.test_lat_weighted_acc.compute()
@@ -397,20 +396,33 @@ class GlobalForecastModule(LightningModule):
             )
 
         #spatial maps
+        latitudes, longitudes = self.lat.copy(), self.lon.copy()
         for plot_var in tqdm(self.plot_variables, desc="Plotting RMSE spatial maps"):
             for var in rmse_spatial_maps.keys():
                 if plot_var in var:
-                    plot_spatial_map_with_basemap(data=rmse_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+                    map = rmse_spatial_maps[var].float().cpu()
+                    if map.shape[0] != len(latitudes) or map.shape[1] != len(longitudes):
+                        print(f'Warning: Found mismatch in resolutions rmse_spatial_map for {var}: {map.shape}, latitude: {len(latitudes)}, longitude: {len(longitudes)}. Subsetting latitude and/or longitude values to match spatial_map resolution')
+                        plot_spatial_map_with_basemap(data=map, lat=latitudes[:map.shape[0]], lon=longitudes[:map.shape[1]], title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+                    else:
+                        plot_spatial_map_with_basemap(data=map, lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+
         for plot_var in tqdm(self.plot_variables, desc="Plotting ACC spatial maps"):
             for var in acc_spatial_maps.keys():
                 if plot_var in var:
-                    plot_spatial_map_with_basemap(data=acc_spatial_maps[var].float().cpu(), lat=self.lat, lon=self.lon, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
-
+                    map = acc_spatial_maps[var].float().cpu()
+                    if map.shape[0] != len(latitudes) or map.shape[1] != len(longitudes):
+                        print(f'Warning: Found mismatch in resolutions acc_spatial_map for {var}: {map.shape}, latitude: {len(latitudes)}, longitude: {len(longitudes)}. Subsetting latitude and/or longitude values to match spatial_map resolution')
+                        plot_spatial_map_with_basemap(data=map, lat=latitudes[:map.shape[0]], lon=longitudes[:map.shape[1]], title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+                    else:
+                        plot_spatial_map_with_basemap(data=map, lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+        
         self.test_lat_weighted_mse.reset()
         self.test_lat_weighted_rmse.reset()
         self.test_lat_weighted_acc.reset()
         self.test_acc_spatial_map.reset()
         self.test_rmse_spatial_map.reset()
+        self.test_resolution_warning_printed = False
 
     #optimizer definition - will be used to optimize the network based
     def configure_optimizers(self):
