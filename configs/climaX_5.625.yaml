@@ -86,7 +86,9 @@ model:
 
 # ---------------------------- DATA -------------------------------------------
 data:
-  root_dir: /glade/derecho/scratch/kvirji/all_5.625deg_preprocessed_n_shards_1 
+  root_dir: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5/1959-2023_01_10-6h-64x32_equiangular_conservative_n_shards_1
+  climatology_val: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5_climatology/1990-2017_6h_64x32_equiangular_conservative.zarr
+  climatology_test: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5_climatology/1990-2019_6h_64x32_equiangular_conservative.zarr
   static_variables: [
     "land_sea_mask",
     "orography",
@@ -142,16 +144,18 @@ data:
       "2m_temperature",
   ]
   out_variables: [
-    "2m_temperature",
+    "2m_temperature","geopotential_50"
   ]
-  # predict_size (steps) * hrs_each_step = lead_time (hrs)
+  # [history_step * hrs_each_step * h = history timestamp (hrs)] for h in history_size 
+  # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
   predict_size: 1
-  predict_step: 24
+  predict_step: 4
   history_size: 0
   history_step: 0
-  hrs_each_step: 1
+  hrs_each_step: 6
   buffer_size: 10000
-  batch_size: 32
+  batch_size: 1
+  mem_load: 0.5
   num_workers: 0
   pin_memory: False
   normalize_data: True

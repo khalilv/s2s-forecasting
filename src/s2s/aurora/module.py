@@ -84,6 +84,8 @@ class GlobalForecastModule(LightningModule):
         self.delta_time = None
         self.plot_variables = []
         self.flip_lat = False
+        self.lat = None
+        self.lon = None
         self.test_resolution_warning_printed = False
         self.val_resolution_warning_printed = False
         self.train_resolution_warning_printed = False

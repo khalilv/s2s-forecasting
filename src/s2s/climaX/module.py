@@ -79,7 +79,6 @@ class GlobalForecastModule(LightningModule):
         self.drop_rate = drop_rate
         self.parallel_patch_embed = parallel_patch_embed
         self.denormalization = None
-        self.get_climatology = None
         self.lat = None
         self.lon = None
         self.plot_variables = []
@@ -151,10 +150,7 @@ class GlobalForecastModule(LightningModule):
     def set_lat_lon(self, lat, lon):
         self.lat = lat
         self.lon = lon
-    
-    def set_get_climatology_fn(self, get_climatology_fn: Callable):
-        self.get_climatology = get_climatology_fn
-    
+       
     def set_lat2d(self, normalize: bool):
         self.lat2d = torch.from_numpy(np.tile(self.lat, (self.img_size[1], 1)).T).unsqueeze(0) #climaX includes 2d latitude as an input field
         if normalize:
@@ -171,10 +167,10 @@ class GlobalForecastModule(LightningModule):
         print('Set variables to plot spatial maps for during evaluation: ', plot_variables)
 
     def training_step(self, batch: Any, batch_idx: int):
-        x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch #spread batch data 
+        x, static, y, _, lead_times, variables, static_variables, out_variables, _, _ = batch #spread batch data 
         
         if y.shape[1] > 1:
-            raise NotImplementedError('Multiple predicttion steps is not supported yet.')
+            raise NotImplementedError('Multiple prediction steps is not supported yet.')
         
         #append 2d latitude to static variables
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
@@ -211,10 +207,10 @@ class GlobalForecastModule(LightningModule):
         return batch_loss['w_mse']
     
     def validation_step(self, batch: Any, batch_idx: int):
-        x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
+        x, static, y, climatology, lead_times, variables, static_variables, out_variables, _, _ = batch
         
         if y.shape[1] > 1:
-            raise NotImplementedError('Multiple predicttion steps is not supported yet.')
+            raise NotImplementedError('Multiple prediction steps is not supported yet.')
         
         #append 2d latitude to static variables
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
@@ -239,13 +235,11 @@ class GlobalForecastModule(LightningModule):
         #set y and preds to float32 for metric calculations
         preds = preds.float()
         y = y.float().squeeze(1)
+        climatology = climatology.float().squeeze(1)
 
         self.val_lat_weighted_mse.update(preds, y)
         self.val_lat_weighted_rmse.update(preds, y)
 
-        assert self.get_climatology is not None, 'Climatology is not initialized. Unable to calculate ACC metric'
-        climatology = self.get_climatology(self.out_variables, output_timestamps.squeeze(1), 'val')
-        climatology = torch.from_numpy(climatology).to(device=preds.device, dtype=preds.dtype)
         self.val_lat_weighted_acc.update(preds, y, climatology)
         
     def on_validation_epoch_end(self):
@@ -267,10 +261,10 @@ class GlobalForecastModule(LightningModule):
         self.val_lat_weighted_acc.reset()
 
     def test_step(self, batch: Any, batch_idx: int):
-        x, static, y, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
+        x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
 
         if y.shape[1] > 1:
-            raise NotImplementedError('Multiple predicttion steps is not supported yet.')
+            raise NotImplementedError('Multiple prediction steps is not supported yet.')
 
         #append 2d latitude to static variables
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
@@ -295,14 +289,12 @@ class GlobalForecastModule(LightningModule):
         #set y and preds to float32 for metric calculations
         preds = preds.float()
         y = y.float().squeeze(1)
+        climatology = climatology.float().squeeze(1)
         
         self.test_lat_weighted_mse.update(preds, y)
         self.test_lat_weighted_rmse.update(preds, y)
         self.test_lat_weighted_rmse_spatial_map.update(preds, y)
 
-        assert self.get_climatology is not None, 'Climatology is not initialized. Unable to calculate ACC metric'
-        climatology = self.get_climatology(self.out_variables, output_timestamps.squeeze(1), 'test')
-        climatology = torch.from_numpy(climatology).to(device=preds.device, dtype=preds.dtype)
         self.test_lat_weighted_acc.update(preds, y, climatology)
         self.test_lat_weighted_acc_spatial_map.update(preds, y, climatology)
 

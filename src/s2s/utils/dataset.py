@@ -108,7 +108,8 @@ class ZarrReader(IterableDataset):
             end_idx = len(data.time) if worker_id == num_workers - 1 else (worker_id + 1) * timesteps_per_worker
             start_idx_plus_carry_over = max(start_idx - (self.predict_range + self.history_range), 0)
             data_per_worker = data.isel(time=slice(start_idx_plus_carry_over, end_idx))
-            assert (data_per_worker.latitude.values == climatology_data.latitude.values).all(), f'Mismatch found between climatology latitudes [{climatology_data.latitude.values[0]},...{climatology_data.latitude.values[-1]}] and data latitudes [{data_per_worker.latitude.values[0]},...{data_per_worker.latitude.values[-1]}]. This will cause the wrong climatology values to be used when calculating ACC'
+            if climatology_data is not None:
+                assert (data_per_worker.latitude.values == climatology_data.latitude.values).all(), f'Mismatch found between climatology latitudes [{climatology_data.latitude.values[0]},...{climatology_data.latitude.values[-1]}] and data latitudes [{data_per_worker.latitude.values[0]},...{data_per_worker.latitude.values[-1]}]. This will cause the wrong climatology values to be used when calculating ACC'
             yield data_per_worker, static_data, climatology_data, self.in_variables, self.static_variables, self.out_variables, self.predict_range, self.predict_step, self.history_range, self.history_step, self.hrs_each_step
 
 
@@ -158,12 +159,12 @@ class Forecast(IterableDataset):
                 if climatology_data is not None:
                     doys = np.array([(np.datetime64(ts, 'D') - np.datetime64(f"{ts.astype('datetime64[Y]')}-01-01", 'D')).astype(int) + 1 for ts in data_shard['time'].values])
                     climatology_shard = climatology_data[out_variables].sel(dayofyear=np.unique(doys))
+                    climatology_shard = climatology_shard.load()
 
                 if (predict_range + history_range > 0):
                     carry_over_data = data_shard.isel(time=slice(-(predict_range + history_range),None))
             
                 data_shard = data_shard.load()
-                climatology_shard = climatology_shard.load()
                 for t in range(history_range, len(data_shard.time) - predict_range):
                     x = data_shard[in_variables].isel(time=slice(t-history_range,t+1,history_step if history_range > 0 else 1)).to_array().transpose('time', 'variable', 'latitude', 'longitude')               
                     input = torch.tensor(x.values, dtype=torch.float32)
@@ -172,8 +173,8 @@ class Forecast(IterableDataset):
                         y = data_shard[out_variables].isel(time=[t]).to_array().transpose('time', 'variable', 'latitude', 'longitude')               
                         lead_times = torch.tensor([0], dtype=torch.float32)
                     else:
-                        y = data_shard[out_variables].isel(time=slice(t + predict_step, t + predict_step * (predict_range + 1), predict_step)).to_array().transpose('time', 'variable', 'latitude', 'longitude')
-                        lead_times = torch.tensor([hrs_each_step*step for step in range(predict_step, predict_step * (predict_range + 1), predict_step)], dtype=torch.float32)
+                        y = data_shard[out_variables].isel(time=slice(t + predict_step, (t + predict_step) + predict_range, predict_step)).to_array().transpose('time', 'variable', 'latitude', 'longitude')
+                        lead_times = torch.tensor([hrs_each_step*step for step in range(predict_step, predict_step + predict_range, predict_step)], dtype=torch.float32)
                     output = torch.tensor(y.values, dtype=torch.float32)
                     output_timestamps = np.array(y['time'].values)
                     if climatology_data is not None:
