@@ -41,6 +41,7 @@ class GlobalForecastModule(LightningModule):
         self,
         pretrained_path: str = "",
         version: int = 0,
+        update_statistics: bool = False,
         lr: float = 5e-4,
         beta_1: float = 0.9,
         beta_2: float = 0.99,
@@ -62,6 +63,7 @@ class GlobalForecastModule(LightningModule):
         super().__init__()
         self.pretrained_path = pretrained_path
         self.version = version
+        self.update_statistics = update_statistics
         self.lr = lr
         self.beta_1 = beta_1
         self.beta_2 = beta_2
@@ -110,13 +112,15 @@ class GlobalForecastModule(LightningModule):
         surf_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.in_surface_variables])
         static_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.static_variables])
         atmos_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.in_atmospheric_variables])
+        surf_stats = self.surf_stats if self.update_statistics else None
+        atmos_stats = self.atmos_stats if self.update_statistics else None
         if self.version == 0:
             self.net = Aurora(
                 surf_vars=surf_vars,
                 static_vars=static_vars,
                 atmos_vars=atmos_vars,
-                # surf_stats=self.surf_stats,
-                # atmos_stats=self.atmos_stats,
+                surf_stats=surf_stats,
+                atmos_stats=atmos_stats,
                 delta_time=self.delta_time
             )
         elif self.version == 1:
@@ -124,8 +128,8 @@ class GlobalForecastModule(LightningModule):
                 surf_vars=surf_vars,
                 static_vars=static_vars,
                 atmos_vars=atmos_vars,
-                # surf_stats=self.surf_stats,
-                # atmos_stats=self.atmos_stats,
+                surf_stats=surf_stats,
+                atmos_stats=atmos_stats,
                 delta_time=self.delta_time
 
             )
@@ -133,8 +137,8 @@ class GlobalForecastModule(LightningModule):
             self.net = AuroraHighRes(
                 surf_vars=surf_vars,
                 static_vars=static_vars,
-                # surf_stats=self.surf_stats,
-                # atmos_stats=self.atmos_stats,
+                surf_stats=surf_stats,
+                atmos_stats=atmos_stats,
                 delta_time=self.delta_time
             )
         else:
