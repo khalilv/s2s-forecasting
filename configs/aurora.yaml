@@ -2,7 +2,7 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/zero_shot/6h-6h-5.625
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/zero_shot/6h-6h-0.25
 
   precision: 16
 
@@ -65,6 +65,7 @@ trainer:
 model:
   pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/aurora-0.25-pretrained.ckpt"
   version: 0
+  update_statistics: False
   lr: 5e-7
   beta_1: 0.9
   beta_2: 0.999
@@ -86,9 +87,12 @@ model:
 
 # ---------------------------- DATA -------------------------------------------
 data:
-  root_dir: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5/1959-2023_01_10-6h-64x32_equiangular_conservative_n_shards_1
-  climatology_val: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5_climatology/1990-2017_6h_64x32_equiangular_conservative.zarr
-  climatology_test: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5_climatology/1990-2019_6h_64x32_equiangular_conservative.zarr
+  # root_dir: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5/1959-2023_01_10-6h-64x32_equiangular_conservative_n_shards_1
+  # climatology_val: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5_climatology/1990-2017_6h_64x32_equiangular_conservative.zarr
+  # climatology_test: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5_climatology/1990-2019_6h_64x32_equiangular_conservative.zarr
+  root_dir: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5/1959-2023_01_10-wb13-6h-1440x721_with_derived_variables_n_shards_8
+  climatology_val: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5_climatology/1990-2017_6h_1440x721.zarr
+  climatology_test: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5_climatology/1990-2019_6h_1440x721.zarr
   static_variables: [
     "land_sea_mask",
     "geopotential_at_surface",
@@ -180,6 +184,6 @@ data:
   buffer_size: 1000
   batch_size: 1
   mem_load: 1.0
-  num_workers: 0
+  num_workers: 2
   pin_memory: False
   normalize_data: False

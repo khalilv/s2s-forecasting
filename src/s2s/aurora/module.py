@@ -238,7 +238,7 @@ class GlobalForecastModule(LightningModule):
                 assert pressure_level.isdigit(), f"Found invalid pressure level in {v}"
                 if atm_var in ATMOSPHERIC_VARS:
                     atm_data = batch.atmos_vars[AURORA_NAME_TO_VAR[atm_var]].squeeze(1)[:,batch.metadata.atmos_levels.index(int(pressure_level)),:,:]
-                    preds.append(torch.flip(atm_data, dims=[-2]) if self.flip_lat else surf_data)
+                    preds.append(torch.flip(atm_data, dims=[-2]) if self.flip_lat else atm_data)
                 else:
                     raise ValueError(f"{v} could not be identified as a surface or atmospheric variable")  
         preds = torch.stack(preds, dim=1) #(T, V, H, W)
