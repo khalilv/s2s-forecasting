@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import math
-import os
 import random
 import xarray as xr
 import numpy as np
@@ -11,10 +9,10 @@ from torch.utils.data import IterableDataset
 
 
 class ZarrReader(IterableDataset):
-    """Dataset for loading numpy files.
+    """Dataset for loading zarr files.
 
     Args:
-        file_list (list): List of numpy file paths. Assumed to be sorted.
+        file_list (list): List of zarr file paths.
         static_variable_file (str): Path to static variable file.
         start_idx (float): Start index as a fraction of the total file list.
         end_idx (float): End index as a fraction of the total file list.
@@ -71,45 +69,73 @@ class ZarrReader(IterableDataset):
             assert self.history_step > 0, "History step must be greater than 0 when including history"
         if self.predict_size > 0:
             assert self.predict_step > 0, "Predict step must be greater than 0 when forecasting"
+        self.years = set(f.split("/")[-1].split("_")[0] for f in self.file_list)
 
     def __iter__(self):
-        if self.shuffle:
-            random.shuffle(self.file_list)
-        iter_start = 0
-        iter_end = len(self.file_list)
-        
         static_data = xr.open_zarr(self.static_variable_file, chunks='auto')
         climatology_data = xr.open_zarr(self.climatology_file, chunks='auto') if self.climatology_file else None
+        if self.shuffle:
+            random.shuffle(self.years)
 
         #carry_over_data prevents needlessly throwing out data samples. 
         #it will only be used if files have temporal ordering (i.e. shuffle=false)
-        carry_over_data = None 
-        for idx in range(iter_start, iter_end):
-            path = self.file_list[idx]
-            data = xr.open_zarr(path, chunks='auto')
-            if carry_over_data is not None and not self.shuffle:
-                data = xr.concat([carry_over_data, data], dim="time")
-            
-            assert len(data.time) > (self.predict_range + self.history_range), f"Data shard with size {len(data.time)} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}"
+        yearly_carry_over_data = None 
+        for year in self.years:
+            year_files = sorted([f for f in self.file_list if f.split('/')[-1].startswith(f"{year}_")])
+    
+            yearly_data = xr.open_mfdataset(
+                year_files,
+                engine="zarr",
+                concat_dim="time",  
+                combine="nested",    
+                parallel=True,
+                chunks='auto'
+            )
 
-            if not self.shuffle and idx < iter_end - 1 and (self.predict_range + self.history_range > 0):
-                carry_over_data = data.isel(time=slice(-(self.predict_range + self.history_range),None))
+            if yearly_carry_over_data is not None and not self.shuffle:
+                yearly_data = xr.concat([yearly_carry_over_data, yearly_data], dim="time")
             
+            assert len(yearly_data.time) > (self.predict_range + self.history_range), f"Yearly data with size {len(yearly_data.time)} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}"
+
+            if not self.shuffle and (self.predict_range + self.history_range > 0):
+                yearly_carry_over_data = yearly_data.isel(time=slice(-(self.predict_range + self.history_range),None))
+
+            if not torch.distributed.is_initialized():
+                global_rank = 0
+                world_size = 1
+            else:
+                global_rank = torch.distributed.get_rank()
+                world_size = torch.distributed.get_world_size()
+            
+            #split data across ranks
+            timesteps_per_rank = len(yearly_data.time) // world_size
+            assert timesteps_per_rank > (self.predict_range + self.history_range), f"Data per rank with size {timesteps_per_rank} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}. Decrease devices."
+            rank_start_idx = global_rank * timesteps_per_rank
+            rank_end_idx = len(yearly_data.time) if global_rank == world_size - 1 else (global_rank + 1) * timesteps_per_rank
+            rank_start_idx_with_carry_over = max(rank_start_idx - (self.predict_range + self.history_range), 0)
+            data_per_rank = yearly_data.isel(time=slice(rank_start_idx_with_carry_over, rank_end_idx))
+
+
+            #within each rank split data across workers
             worker_info = torch.utils.data.get_worker_info()
             if worker_info is None:
-                num_workers, worker_id = 1, 0
+                worker_id = 0
+                num_workers = 1
             else:
-                num_workers, worker_id = worker_info.num_workers, worker_info.id
+                worker_id = worker_info.id
+                num_workers = worker_info.num_workers
 
             # split data across workers
-            timesteps_per_worker = len(data.time) // num_workers
-            assert timesteps_per_worker > (self.predict_range + self.history_range), f"Data shard per worker with size {timesteps_per_worker} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}. Decrease num_workers."
-            start_idx = worker_id * timesteps_per_worker
-            end_idx = len(data.time) if worker_id == num_workers - 1 else (worker_id + 1) * timesteps_per_worker
-            start_idx_plus_carry_over = max(start_idx - (self.predict_range + self.history_range), 0)
-            data_per_worker = data.isel(time=slice(start_idx_plus_carry_over, end_idx))
+            timesteps_per_worker = len(data_per_rank.time) // num_workers
+            assert timesteps_per_worker > (self.predict_range + self.history_range), f"Data per worker with size {timesteps_per_worker} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}. Decrease num_workers."
+            worker_start_idx = worker_id * timesteps_per_worker
+            worker_end_idx = len(data_per_rank.time) if worker_id == num_workers - 1 else (worker_id + 1) * timesteps_per_worker
+            worker_start_idx_with_carry_over = max(worker_start_idx - (self.predict_range + self.history_range), 0)
+            data_per_worker = data_per_rank.isel(time=slice(worker_start_idx_with_carry_over, worker_end_idx))
             if climatology_data is not None:
                 assert (data_per_worker.latitude.values == climatology_data.latitude.values).all(), f'Mismatch found between climatology latitudes [{climatology_data.latitude.values[0]},...{climatology_data.latitude.values[-1]}] and data latitudes [{data_per_worker.latitude.values[0]},...{data_per_worker.latitude.values[-1]}]. This will cause the wrong climatology values to be used when calculating ACC'
+            
+            print(f'Info: Rank: {global_rank + 1}/{world_size} gets {rank_start_idx_with_carry_over} to {rank_end_idx}. Worker {worker_id + 1}/{num_workers} in rank {global_rank + 1} gets {worker_start_idx_with_carry_over} to {worker_end_idx}')
             yield data_per_worker, static_data, climatology_data, self.in_variables, self.static_variables, self.out_variables, self.predict_range, self.predict_step, self.history_range, self.history_step, self.hrs_each_step
 
 
@@ -139,20 +165,19 @@ class Forecast(IterableDataset):
             static = static_data[static_variables].to_array().transpose('variable','latitude','longitude').load()
             static = torch.tensor(static.values, dtype=torch.float32)
             if self.mem_load == 0:
-                shard_length = 1
+                shard_length = history_range + predict_range + 1
             elif self.mem_load == 1:
                 shard_length = len(data.time)
             else:
                 partitions = int(1 / self.mem_load)
-                shard_length = len(data.time) // partitions
-            shard_length = max(shard_length, history_range + predict_range + 1)
+                shard_length = max(len(data.time) // partitions, history_range + predict_range + 1)
 
             carry_over_data = None
             for shard_start in range(0, len(data.time), shard_length):
                 shard_end = min(shard_start + shard_length, len(data.time))
                 
                 data_shard = data.isel(time=slice(shard_start, shard_end))
-                if carry_over_data is not None :
+                if carry_over_data is not None:
                     data_shard = xr.concat([carry_over_data, data_shard], dim="time")
                 assert len(data_shard.time) > (predict_range + history_range), f"Data shard with size {len(data_shard.time)} is not large enough for a history size of {history_range // history_step} with step {history_step} and a prediction size of {predict_range // predict_step} with step {predict_step}"
                 
