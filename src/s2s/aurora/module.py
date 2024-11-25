@@ -399,28 +399,28 @@ class GlobalForecastModule(LightningModule):
                 sync_dist=True
             )
 
-        #spatial maps
-        latitudes, longitudes = self.lat.copy(), self.lon.copy()
-        for plot_var in tqdm(self.plot_variables, desc="Plotting RMSE spatial maps"):
-            for var in rmse_spatial_maps.keys():
-                if plot_var in var:
-                    map = rmse_spatial_maps[var].float().cpu()
-                    if map.shape[0] != len(latitudes) or map.shape[1] != len(longitudes):
-                        print(f'Warning: Found mismatch in resolutions rmse_spatial_map for {var}: {map.shape}, latitude: {len(latitudes)}, longitude: {len(longitudes)}. Subsetting latitude and/or longitude values to match spatial_map resolution')
-                        plot_spatial_map_with_basemap(data=map, lat=latitudes[:map.shape[0]], lon=longitudes[:map.shape[1]], title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
-                    else:
-                        plot_spatial_map_with_basemap(data=map, lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+        if self.global_rank == 0:
+            latitudes, longitudes = self.lat.copy(), self.lon.copy()
+            for plot_var in tqdm(self.plot_variables, desc="Plotting RMSE spatial maps"):
+                for var in rmse_spatial_maps.keys():
+                    if plot_var in var:
+                        map = rmse_spatial_maps[var].float().cpu()
+                        if map.shape[0] != len(latitudes) or map.shape[1] != len(longitudes):
+                            print(f'Warning: Found mismatch in resolutions rmse_spatial_map for {var}: {map.shape}, latitude: {len(latitudes)}, longitude: {len(longitudes)}. Subsetting latitude and/or longitude values to match spatial_map resolution')
+                            plot_spatial_map_with_basemap(data=map, lat=latitudes[:map.shape[0]], lon=longitudes[:map.shape[1]], title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+                        else:
+                            plot_spatial_map_with_basemap(data=map, lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
 
-        for plot_var in tqdm(self.plot_variables, desc="Plotting ACC spatial maps"):
-            for var in acc_spatial_maps.keys():
-                if plot_var in var:
-                    map = acc_spatial_maps[var].float().cpu()
-                    if map.shape[0] != len(latitudes) or map.shape[1] != len(longitudes):
-                        print(f'Warning: Found mismatch in resolutions acc_spatial_map for {var}: {map.shape}, latitude: {len(latitudes)}, longitude: {len(longitudes)}. Subsetting latitude and/or longitude values to match spatial_map resolution')
-                        plot_spatial_map_with_basemap(data=map, lat=latitudes[:map.shape[0]], lon=longitudes[:map.shape[1]], title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
-                    else:
-                        plot_spatial_map_with_basemap(data=map, lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
-        
+            for plot_var in tqdm(self.plot_variables, desc="Plotting ACC spatial maps"):
+                for var in acc_spatial_maps.keys():
+                    if plot_var in var:
+                        map = acc_spatial_maps[var].float().cpu()
+                        if map.shape[0] != len(latitudes) or map.shape[1] != len(longitudes):
+                            print(f'Warning: Found mismatch in resolutions acc_spatial_map for {var}: {map.shape}, latitude: {len(latitudes)}, longitude: {len(longitudes)}. Subsetting latitude and/or longitude values to match spatial_map resolution')
+                            plot_spatial_map_with_basemap(data=map, lat=latitudes[:map.shape[0]], lon=longitudes[:map.shape[1]], title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+                        else:
+                            plot_spatial_map_with_basemap(data=map, lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+            
         self.test_lat_weighted_mse.reset()
         self.test_lat_weighted_rmse.reset()
         self.test_lat_weighted_acc.reset()

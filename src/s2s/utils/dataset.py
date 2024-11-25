@@ -14,8 +14,6 @@ class ZarrReader(IterableDataset):
     Args:
         file_list (list): List of zarr file paths.
         static_variable_file (str): Path to static variable file.
-        start_idx (float): Start index as a fraction of the total file list.
-        end_idx (float): End index as a fraction of the total file list.
         in_variables (list): List of input variables.
         static_variables (list): List of static variables.
         out_variables (list): List of output variables.
@@ -32,8 +30,6 @@ class ZarrReader(IterableDataset):
         self,
         file_list,
         static_variable_file,
-        start_idx,
-        end_idx,
         in_variables,
         static_variables,
         out_variables,
@@ -47,9 +43,6 @@ class ZarrReader(IterableDataset):
         multi_dataset_training=False,
     ) -> None:
         super().__init__()
-        start_idx = int(start_idx * len(file_list))
-        end_idx = int(end_idx * len(file_list))
-        file_list = file_list[start_idx:end_idx]
         self.file_list = [f for f in file_list if "climatology" not in f]
         self.climatology_file = climatology_file
         self.static_variable_file = static_variable_file
@@ -69,7 +62,7 @@ class ZarrReader(IterableDataset):
             assert self.history_step > 0, "History step must be greater than 0 when including history"
         if self.predict_size > 0:
             assert self.predict_step > 0, "Predict step must be greater than 0 when forecasting"
-        self.years = set(f.split("/")[-1].split("_")[0] for f in self.file_list)
+        self.years = sorted(set(f.split("/")[-1].split("_")[0] for f in self.file_list))
 
     def __iter__(self):
         static_data = xr.open_zarr(self.static_variable_file, chunks='auto')
