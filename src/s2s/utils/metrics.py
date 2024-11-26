@@ -4,6 +4,7 @@
 import numpy as np
 import torch
 from torchmetrics import Metric
+from s2s.utils.data_utils import SURFACE_VARS, ATMOSPHERIC_VARS, NAME_TO_WEIGHT
 
 class mse(Metric):
     def __init__(self, vars, transforms=None, suffix=None, **kwargs):
@@ -118,6 +119,63 @@ class lat_weighted_mse(Metric):
         loss_name = f"w_mse_{self.suffix}" if self.suffix else f"w_mse"
         loss_dict[loss_name] = torch.mean(torch.stack(list(loss_dict.values())))
 
+        return loss_dict
+
+class variable_weighted_mae(Metric):
+    def __init__(self, vars, alpha, beta, gamma, transforms=None, suffix=None, **kwargs):
+        super().__init__(**kwargs)
+        self.add_state("weighted_mae_over_vhw", default=torch.tensor(0), dist_reduce_fx="sum")
+        self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
+
+        self.vars = vars
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
+        self.transforms = transforms
+        self.suffix = suffix
+        self.surf_var_idxs = []
+        self.atm_var_idxs = []
+        self.surf_var_weights = []
+        self.atm_var_weights = []
+        for idx,v in enumerate(self.vars):
+            if v in SURFACE_VARS:
+                self.surf_var_idxs.append(idx)
+                if v in NAME_TO_WEIGHT:
+                    self.surf_var_weights.append(NAME_TO_WEIGHT[v])
+                else:
+                    self.surf_var_weights.append(1)
+            else:   
+                atm_var = '_'.join(v.split('_')[:-1])
+                pressure_level = v.split('_')[-1]
+                assert pressure_level.isdigit(), f"Found invalid pressure level in {v}"
+                if atm_var in ATMOSPHERIC_VARS: 
+                    self.atm_var_idxs.append(idx)
+                    if atm_var in NAME_TO_WEIGHT:
+                        self.atm_var_weights.append(NAME_TO_WEIGHT[atm_var])
+                    else:
+                        self.atm_var_weights.append(1)
+                else:
+                    raise ValueError(f"{v} could not be identified as a surface or atmospheric variable")                
+    
+    def update(self, preds: torch.Tensor, targets: torch.Tensor):
+        surf_preds, atm_preds = preds[:,self.surf_var_idxs,:,:], preds[:,self.atm_var_idxs,:,:]
+        surf_targets, atm_targets = targets[:,self.surf_var_idxs,:,:], targets[:,self.atm_var_idxs,:,:]
+        B, Vs, Va = preds.shape[0], surf_preds.shape[1], atm_preds.shape[1]
+
+        surf_ae = torch.abs(surf_preds - surf_targets) #(T, Vs, H, W)
+        surf_mae_over_hw_weighted_sum_over_v = (surf_ae.mean(dim=(-1, -2)) * self.surf_var_weights).sum(dim=1)  #(T,)
+        
+        atm_ae = torch.abs(atm_preds - atm_targets) #(T, Va, H, W)
+        atm_mae_over_hw_weighted_sum_over_v = (atm_ae.mean(dim=(-1, -2)) * self.atm_var_weights).sum(dim=1)  #(T,)
+        
+        mae_over_hw_weighted_sum_over_v = (self.alpha * surf_mae_over_hw_weighted_sum_over_v) + (self.beta * atm_mae_over_hw_weighted_sum_over_v) 
+        self.weighted_mae_over_vhw += ((self.gamma * mae_over_hw_weighted_sum_over_v) / (Vs + Va)).sum(dim=0)
+        self.count += B
+
+    def compute(self):
+        loss_dict = {}
+        loss_name = f"var_w_mae_{self.suffix}" if self.suffix else f"var_w_mae"
+        loss_dict[loss_name] = self.weighted_mae_over_vhw / self.count
         return loss_dict
 
 class lat_weighted_rmse(Metric):

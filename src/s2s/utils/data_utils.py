@@ -65,6 +65,18 @@ ATMOSPHERIC_VARS = [
     "specific_humidity",
 ]
 
+NAME_TO_WEIGHT = {
+    "mean_sea_level_pressure": 1.6,
+    "10m_u_component_of_wind": 0.77,
+    "10m_v_component_of_wind": 0.66,
+    "2m_temperature": 3.5,
+    "geopotential": 3.5,
+    "specific_humidity": 0.8,
+    "temperature": 1.7,
+    "u_component_of_wind": 0.87,
+    "v_component_of_wind": 0.6
+}
+
 DEFAULT_PRESSURE_LEVELS = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
 
 HRS_PER_LEAP_YEAR = 8784
