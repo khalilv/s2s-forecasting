@@ -315,16 +315,16 @@ class GlobalForecastModule(LightningModule):
                 sync_dist=True
             )
 
-         #spatial maps
-        latitudes, longitudes = self.lat.copy(), self.lon.copy()
-        for plot_var in tqdm(self.plot_variables, desc="Plotting RMSE spatial maps"):
-            for var in rmse_spatial_maps.keys():
-                if plot_var in var:
-                    plot_spatial_map_with_basemap(data=rmse_spatial_maps[var].float().cpu(), lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
-        for plot_var in tqdm(self.plot_variables, desc="Plotting ACC spatial maps"):
-            for var in acc_spatial_maps.keys():
-                if plot_var in var:
-                    plot_spatial_map_with_basemap(data=acc_spatial_maps[var].float().cpu(), lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+        if self.global_rank == 0:
+            latitudes, longitudes = self.lat.copy(), self.lon.copy()
+            for plot_var in tqdm(self.plot_variables, desc="Plotting RMSE spatial maps"):
+                for var in rmse_spatial_maps.keys():
+                    if plot_var in var:
+                        plot_spatial_map_with_basemap(data=rmse_spatial_maps[var].float().cpu(), lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+            for plot_var in tqdm(self.plot_variables, desc="Plotting ACC spatial maps"):
+                for var in acc_spatial_maps.keys():
+                    if plot_var in var:
+                        plot_spatial_map_with_basemap(data=acc_spatial_maps[var].float().cpu(), lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
 
         self.test_lat_weighted_mse.reset()
         self.test_lat_weighted_rmse.reset()
