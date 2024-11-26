@@ -42,6 +42,7 @@ class GlobalForecastModule(LightningModule):
         pretrained_path: str = "",
         version: int = 0,
         update_statistics: bool = False,
+        delta_time: int = 6,
         lr: float = 5e-4,
         beta_1: float = 0.9,
         beta_2: float = 0.99,
@@ -64,6 +65,7 @@ class GlobalForecastModule(LightningModule):
         self.pretrained_path = pretrained_path
         self.version = version
         self.update_statistics = update_statistics
+        self.delta_time = delta_time
         self.lr = lr
         self.beta_1 = beta_1
         self.beta_2 = beta_2
@@ -83,7 +85,6 @@ class GlobalForecastModule(LightningModule):
         self.parallel_patch_embed = parallel_patch_embed
         self.surf_stats = {}
         self.atmos_stats = {}
-        self.delta_time = None
         self.plot_variables = []
         self.flip_lat = False
         self.lat = None
@@ -108,7 +109,6 @@ class GlobalForecastModule(LightningModule):
         self.test_acc_spatial_map = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), None)
 
     def init_network(self):
-        assert self.delta_time is not None, 'delta_time hyperparameter must be set before initializing model'
         surf_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.in_surface_variables])
         static_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.static_variables])
         atmos_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.in_atmospheric_variables])
@@ -255,8 +255,6 @@ class GlobalForecastModule(LightningModule):
         self.plot_variables = plot_variables
         print('Set variables to plot spatial maps for during evaluation: ', plot_variables)
 
-    def set_delta_time(self, predict_step_size, hrs_each_step):
-        self.delta_time = int(predict_step_size * hrs_each_step)
 
     def set_variables(self, in_variables: list, static_variables: list, out_variables: list):
         self.in_variables = in_variables
@@ -306,12 +304,11 @@ class GlobalForecastModule(LightningModule):
         
         input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
         
-        rollout_steps = y.shape[1]
+        rollout_steps = int(lead_times[0][-1] // self.delta_time)
         with torch.inference_mode():
-            rollout_batches = [rollout_batch.to("cpu") for rollout_batch in rollout(self.net, input_batch, steps=rollout_steps)]
-        output_batch = rollout_batches[-1].to(self.device)
+            output_batch = rollout(self.net, input_batch, steps=rollout_steps)
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
-        
+                
         assert (pred_timestamps == output_timestamps[:,-1]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,-1]}'
 
         target = y[:, -1]
@@ -351,16 +348,15 @@ class GlobalForecastModule(LightningModule):
 
     def test_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
-        
+        print(input_timestamps, output_timestamps)
         if not torch.all(lead_times == lead_times[0]):
             raise NotImplementedError("Variable lead times not implemented yet.")
         
         input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
         
-        rollout_steps = y.shape[1]
+        rollout_steps = int(lead_times[0][-1] // self.delta_time)
         with torch.inference_mode():
-            rollout_batches = [rollout_batch.to("cpu") for rollout_batch in rollout(self.net, input_batch, steps=rollout_steps)]
-        output_batch = rollout_batches[-1].to(self.device)
+            output_batch = rollout(self.net, input_batch, steps=rollout_steps)
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
         
         assert (pred_timestamps == output_timestamps[:,-1]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,-1]}'

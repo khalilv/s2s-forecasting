@@ -11,7 +11,7 @@ from s2s.aurora.model.aurora import Aurora
 __all__ = ["rollout"]
 
 
-def rollout(model: Aurora, batch: Batch, steps: int) -> Generator[Batch, None, None]:
+def rollout(model: Aurora, batch: Batch, steps: int) -> Batch:
     """Perform a roll-out to make long-term predictions.
 
     Args:
@@ -31,9 +31,6 @@ def rollout(model: Aurora, batch: Batch, steps: int) -> Generator[Batch, None, N
 
     for _ in range(steps):
         pred = model.forward(batch)
-
-        yield pred
-
         # Add the appropriate history so the model can be run on the prediction.
         batch = dataclasses.replace(
             pred,
@@ -46,3 +43,4 @@ def rollout(model: Aurora, batch: Batch, steps: int) -> Generator[Batch, None, N
                 for k, v in pred.atmos_vars.items()
             },
         )
+    return pred
