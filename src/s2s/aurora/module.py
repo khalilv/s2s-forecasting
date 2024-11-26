@@ -348,7 +348,9 @@ class GlobalForecastModule(LightningModule):
 
     def test_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
+        
         print(input_timestamps, output_timestamps)
+        
         if not torch.all(lead_times == lead_times[0]):
             raise NotImplementedError("Variable lead times not implemented yet.")
         

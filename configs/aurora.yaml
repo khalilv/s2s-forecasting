@@ -2,11 +2,11 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/zero_shot/1d-6h-0.25
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/zero_shot/7d-6h-0.25
 
   precision: 16
 
-  devices: 2
+  devices: 4
   num_nodes: 1
   accelerator: gpu
   strategy: ddp
@@ -66,6 +66,7 @@ model:
   pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/aurora-0.25-pretrained.ckpt"
   version: 0
   update_statistics: False
+  delta_time: 6
   lr: 5e-7
   beta_1: 0.9
   beta_2: 0.999
@@ -176,14 +177,14 @@ data:
   ]
   # [history_step * hrs_each_step * h = history timestamp (hrs)] for h in history_size 
   # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
-  predict_size: 4
-  predict_step: 1
+  predict_size: 1
+  predict_step: 28
   history_size: 1
   history_step: 1
   hrs_each_step: 6
   buffer_size: 100
   batch_size: 1
-  mem_load: 0.1
-  num_workers: 4
-  pin_memory: False
+  mem_load: 0.5
+  num_workers: 2
+  pin_memory: True
   normalize_data: False
