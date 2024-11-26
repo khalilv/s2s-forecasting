@@ -156,7 +156,10 @@ class variable_weighted_mae(Metric):
                         self.atm_var_weights.append(1)
                 else:
                     raise ValueError(f"{v} could not be identified as a surface or atmospheric variable")                
-    
+        
+        self.surf_var_weights = torch.tensor(self.surf_var_weights, dtype=torch.float32)
+        self.atm_var_weights = torch.tensor(self.atm_var_weights, dtype=torch.float32)
+
     def update(self, preds: torch.Tensor, targets: torch.Tensor):
         surf_preds, atm_preds = preds[:,self.surf_var_idxs,:,:], preds[:,self.atm_var_idxs,:,:]
         surf_targets, atm_targets = targets[:,self.surf_var_idxs,:,:], targets[:,self.atm_var_idxs,:,:]
