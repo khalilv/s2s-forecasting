@@ -100,7 +100,7 @@ class ZarrReader(IterableDataset):
                 global_rank = torch.distributed.get_rank()
                 world_size = torch.distributed.get_world_size()
             
-            #split data across ranks
+            # split data across ranks. each rank will get an identical slice to avoid synchronization issues. if data cannot be split evenly, remainder will be discarded 
             timesteps_per_rank = (len(yearly_data.time) + ((world_size - 1)*(self.predict_range + self.history_range))) // world_size
             assert timesteps_per_rank > (self.predict_range + self.history_range), f"Data per rank with size {timesteps_per_rank} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}. Decrease devices."
             rank_start_idx = global_rank * (timesteps_per_rank - (self.predict_range + self.history_range))
@@ -117,7 +117,7 @@ class ZarrReader(IterableDataset):
                 worker_id = worker_info.id
                 num_workers = worker_info.num_workers
 
-            # split data across workers
+            # split data across workers. each worker will get an identical slice to avoid synchronization issues. if data cannot be split evenly, remainder will be discarded 
             timesteps_per_worker = (len(data_per_rank.time) + ((num_workers - 1)*(self.predict_range + self.history_range))) // num_workers
             assert timesteps_per_worker > (self.predict_range + self.history_range), f"Data per worker with size {timesteps_per_worker} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}. Decrease num_workers."
             worker_start_idx = worker_id * (timesteps_per_worker - (self.predict_range + self.history_range))
