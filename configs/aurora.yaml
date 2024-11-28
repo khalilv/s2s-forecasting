@@ -9,8 +9,11 @@ trainer:
   devices: 3
   num_nodes: 1
   accelerator: gpu
-  strategy: ddp
-
+  strategy:     
+    class_path: pytorch_lightning.strategies.DDPStrategy
+    init_args:
+      timeout: 02:00:00
+  
   min_epochs: 1
   max_epochs: 50
   enable_progress_bar: true
