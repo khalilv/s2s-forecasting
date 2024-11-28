@@ -124,7 +124,7 @@ class lat_weighted_mse(Metric):
 class variable_weighted_mae(Metric):
     def __init__(self, vars, alpha, beta, gamma, transforms=None, suffix=None, **kwargs):
         super().__init__(**kwargs)
-        self.add_state("weighted_mae_over_vhw", default=torch.tensor(0), dist_reduce_fx="sum")
+        self.add_state("weighted_mae_over_vhw", default=torch.tensor(0.0), dist_reduce_fx="sum")
         self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
 
         self.vars = vars

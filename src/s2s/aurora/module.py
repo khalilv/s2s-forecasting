@@ -17,7 +17,8 @@ from s2s.utils.metrics import (
     lat_weighted_mse,
     lat_weighted_rmse,
     acc_spatial_map,
-    rmse_spatial_map
+    rmse_spatial_map,
+    variable_weighted_mae
 )
 from s2s.utils.data_utils import plot_spatial_map_with_basemap, split_surface_atmospheric, AURORA_NAME_TO_VAR, SURFACE_VARS, ATMOSPHERIC_VARS, STATIC_VARS
 #3) Global forecast module - abstraction for training/validation/testing steps. setup for the module including hyperparameters is included here
