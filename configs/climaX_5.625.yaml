@@ -157,5 +157,5 @@ data:
   batch_size: 1
   mem_load: 1.0
   num_workers: 2
-  pin_memory: False
+  pin_memory: True
   normalize_data: True

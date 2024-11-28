@@ -101,12 +101,11 @@ class ZarrReader(IterableDataset):
                 world_size = torch.distributed.get_world_size()
             
             #split data across ranks
-            timesteps_per_rank = len(yearly_data.time) // world_size
+            timesteps_per_rank = (len(yearly_data.time) + ((world_size - 1)*(self.predict_range + self.history_range))) // world_size
             assert timesteps_per_rank > (self.predict_range + self.history_range), f"Data per rank with size {timesteps_per_rank} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}. Decrease devices."
-            rank_start_idx = global_rank * timesteps_per_rank
-            rank_end_idx = len(yearly_data.time) if global_rank == world_size - 1 else (global_rank + 1) * timesteps_per_rank
-            rank_start_idx_with_carry_over = max(rank_start_idx - (self.predict_range + self.history_range), 0)
-            data_per_rank = yearly_data.isel(time=slice(rank_start_idx_with_carry_over, rank_end_idx))
+            rank_start_idx = global_rank * (timesteps_per_rank - (self.predict_range + self.history_range))
+            rank_end_idx = rank_start_idx + timesteps_per_rank
+            data_per_rank = yearly_data.isel(time=slice(rank_start_idx, rank_end_idx))
 
 
             #within each rank split data across workers
@@ -119,16 +118,16 @@ class ZarrReader(IterableDataset):
                 num_workers = worker_info.num_workers
 
             # split data across workers
-            timesteps_per_worker = len(data_per_rank.time) // num_workers
+            timesteps_per_worker = (len(data_per_rank.time) + ((num_workers - 1)*(self.predict_range + self.history_range))) // num_workers
             assert timesteps_per_worker > (self.predict_range + self.history_range), f"Data per worker with size {timesteps_per_worker} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}. Decrease num_workers."
-            worker_start_idx = worker_id * timesteps_per_worker
-            worker_end_idx = len(data_per_rank.time) if worker_id == num_workers - 1 else (worker_id + 1) * timesteps_per_worker
-            worker_start_idx_with_carry_over = max(worker_start_idx - (self.predict_range + self.history_range), 0)
-            data_per_worker = data_per_rank.isel(time=slice(worker_start_idx_with_carry_over, worker_end_idx))
+            worker_start_idx = worker_id * (timesteps_per_worker - (self.predict_range + self.history_range))
+            worker_end_idx = worker_start_idx + timesteps_per_worker
+            data_per_worker = data_per_rank.isel(time=slice(worker_start_idx, worker_end_idx))
+            
             if climatology_data is not None:
                 assert (data_per_worker.latitude.values == climatology_data.latitude.values).all(), f'Mismatch found between climatology latitudes [{climatology_data.latitude.values[0]},...{climatology_data.latitude.values[-1]}] and data latitudes [{data_per_worker.latitude.values[0]},...{data_per_worker.latitude.values[-1]}]. This will cause the wrong climatology values to be used when calculating ACC'
             
-            print(f'Info: Rank: {global_rank + 1}/{world_size} gets {rank_start_idx_with_carry_over} to {rank_end_idx}. Worker {worker_id + 1}/{num_workers} in rank {global_rank + 1} gets {worker_start_idx_with_carry_over} to {worker_end_idx}')
+            print(f'Info: Year {year}. Rank: {global_rank + 1}/{world_size} gets {rank_start_idx} to {rank_end_idx}. Worker {worker_id + 1}/{num_workers} in rank {global_rank + 1} gets {worker_start_idx} to {worker_end_idx}')
             yield data_per_worker, static_data, climatology_data, self.in_variables, self.static_variables, self.out_variables, self.predict_range, self.predict_step, self.history_range, self.history_step, self.hrs_each_step
 
 

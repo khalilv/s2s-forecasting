@@ -6,7 +6,7 @@ trainer:
 
   precision: 16
 
-  devices: 4
+  devices: 3
   num_nodes: 1
   accelerator: gpu
   strategy: ddp
@@ -184,7 +184,7 @@ data:
   hrs_each_step: 6
   buffer_size: 100
   batch_size: 1
-  mem_load: 0.5
+  mem_load: 0.1
   num_workers: 2
   pin_memory: True
   normalize_data: False
