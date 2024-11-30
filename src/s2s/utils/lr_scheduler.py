@@ -17,8 +17,8 @@ class LinearWarmupCosineAnnealingLR(_LRScheduler):
     def __init__(
         self,
         optimizer: Optimizer,
-        warmup_epochs: int,
-        max_epochs: int,
+        warmup_steps: int,
+        max_steps: int,
         warmup_start_lr: float = 0.0,
         eta_min: float = 0.0,
         last_epoch: int = -1,
@@ -26,14 +26,14 @@ class LinearWarmupCosineAnnealingLR(_LRScheduler):
         """
         Args:
             optimizer (Optimizer): Wrapped optimizer.
-            warmup_epochs (int): Maximum number of iterations for linear warmup
-            max_epochs (int): Maximum number of iterations
-            warmup_start_lr (float): Learning rate to start the linear warmup. Default: 0.
+            warmup_steps (int): Maximum number of iterations for linear warmup
+            max_steps (int): Maximum number of iterations
+            warmup_start_lr (float): LearninAZg rate to start the linear warmup. Default: 0.
             eta_min (float): Minimum learning rate. Default: 0.
             last_epoch (int): The index of last epoch. Default: -1.
         """
-        self.warmup_epochs = warmup_epochs
-        self.max_epochs = max_epochs
+        self.warmup_steps = warmup_steps
+        self.max_steps = max_steps
         self.warmup_start_lr = warmup_start_lr
         self.eta_min = eta_min
 
@@ -47,28 +47,28 @@ class LinearWarmupCosineAnnealingLR(_LRScheduler):
                 UserWarning,
             )
 
-        if self.last_epoch == self.warmup_epochs:
+        if self.last_epoch == self.warmup_steps:
             return self.base_lrs
         if self.last_epoch == 0:
             return [self.warmup_start_lr] * len(self.base_lrs)
-        if self.last_epoch < self.warmup_epochs:
+        if self.last_epoch < self.warmup_steps:
             return [
-                group["lr"] + (base_lr - self.warmup_start_lr) / (self.warmup_epochs - 1)
+                group["lr"] + (base_lr - self.warmup_start_lr) / (self.warmup_steps - 1)
                 for base_lr, group in zip(self.base_lrs, self.optimizer.param_groups)
             ]
-        if (self.last_epoch - 1 - self.max_epochs) % (2 * (self.max_epochs - self.warmup_epochs)) == 0:
+        if (self.last_epoch - 1 - self.max_steps) % (2 * (self.max_steps - self.warmup_steps)) == 0:
             return [
                 group["lr"]
-                + (base_lr - self.eta_min) * (1 - math.cos(math.pi / (self.max_epochs - self.warmup_epochs))) / 2
+                + (base_lr - self.eta_min) * (1 - math.cos(math.pi / (self.max_steps - self.warmup_steps))) / 2
                 for base_lr, group in zip(self.base_lrs, self.optimizer.param_groups)
             ]
 
         return [
-            (1 + math.cos(math.pi * (self.last_epoch - self.warmup_epochs) / (self.max_epochs - self.warmup_epochs)))
+            (1 + math.cos(math.pi * (self.last_epoch - self.warmup_steps) / (self.max_steps - self.warmup_steps)))
             / (
                 1
                 + math.cos(
-                    math.pi * (self.last_epoch - self.warmup_epochs - 1) / (self.max_epochs - self.warmup_epochs)
+                    math.pi * (self.last_epoch - self.warmup_steps - 1) / (self.max_steps - self.warmup_steps)
                 )
             )
             * (group["lr"] - self.eta_min)
@@ -78,10 +78,10 @@ class LinearWarmupCosineAnnealingLR(_LRScheduler):
 
     def _get_closed_form_lr(self) -> List[float]:
         """Called when epoch is passed as a param to the `step` function of the scheduler."""
-        if self.last_epoch < self.warmup_epochs:
+        if self.last_epoch < self.warmup_steps:
             return [
                 self.warmup_start_lr
-                + self.last_epoch * (base_lr - self.warmup_start_lr) / max(1, self.warmup_epochs - 1)
+                + self.last_epoch * (base_lr - self.warmup_start_lr) / max(1, self.warmup_steps - 1)
                 for base_lr in self.base_lrs
             ]
 
@@ -89,6 +89,32 @@ class LinearWarmupCosineAnnealingLR(_LRScheduler):
             self.eta_min
             + 0.5
             * (base_lr - self.eta_min)
-            * (1 + math.cos(math.pi * (self.last_epoch - self.warmup_epochs) / (self.max_epochs - self.warmup_epochs)))
+            * (1 + math.cos(math.pi * (self.last_epoch - self.warmup_steps) / (self.max_steps - self.warmup_steps)))
             for base_lr in self.base_lrs
         ]
+
+class LinearWarmupConstantLR(_LRScheduler):
+    def __init__(self, optimizer, warmup_steps, last_epoch=-1):
+        """
+        Linear warm-up to a constant learning rate.
+
+        Args:
+            optimizer (Optimizer): Wrapped optimizer.
+            warmup_steps (int): Number of steps for linear warm-up.
+            last_epoch (int): The index of the last epoch. Default: -1.
+        """
+        self.warmup_steps = warmup_steps
+        super(LinearWarmupConstantLR, self).__init__(optimizer, last_epoch)
+
+    def get_lr(self) -> List[float]:
+        if self.last_epoch < self.warmup_steps:
+            return [base_lr * (self.last_epoch + 1) / self.warmup_steps for base_lr in self.base_lrs]
+        else:
+            return [base_lr for base_lr in self.base_lrs]
+    
+    def _get_closed_form_lr(self) -> List[float]:
+        """Compute learning rate for a given epoch index."""
+        if self.last_epoch < self.warmup_steps:
+            return [base_lr * (self.last_epoch + 1) / self.warmup_steps for base_lr in self.base_lrs]
+        else:
+            return [base_lr for base_lr in self.base_lrs]

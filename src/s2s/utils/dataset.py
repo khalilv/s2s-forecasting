@@ -24,7 +24,6 @@ class ZarrReader(IterableDataset):
         history_step (int, optional): Step size between history elements. Defaults to 1.
         hrs_each_step (int, optional): Hours between consecutive steps. Defaults to 1.
         shuffle (bool, optional): Whether to shuffle the file list. Defaults to False.
-        multi_dataset_training (bool, optional): Flag for multi-dataset training. Defaults to False.
     """
     def __init__(
         self,
@@ -40,7 +39,6 @@ class ZarrReader(IterableDataset):
         history_step: int = 1,
         hrs_each_step: int = 1,
         shuffle: bool = False,
-        multi_dataset_training=False,
     ) -> None:
         super().__init__()
         self.file_list = [f for f in file_list if "climatology" not in f]
@@ -50,7 +48,6 @@ class ZarrReader(IterableDataset):
         self.static_variables = static_variables
         self.out_variables = out_variables
         self.shuffle = shuffle
-        self.multi_dataset_training = multi_dataset_training
         self.predict_size = predict_size
         self.predict_step = predict_step
         self.history_size = history_size
@@ -68,7 +65,9 @@ class ZarrReader(IterableDataset):
         static_data = xr.open_zarr(self.static_variable_file, chunks='auto')
         climatology_data = xr.open_zarr(self.climatology_file, chunks='auto') if self.climatology_file else None
         if self.shuffle:
-            random.shuffle(self.years)
+            generator = torch.Generator()
+            indices = torch.randperm(len(self.years), generator=generator).tolist()
+            self.years = [self.years[i] for i in indices]
 
         #carry_over_data prevents needlessly throwing out data samples. 
         #it will only be used if files have temporal ordering (i.e. shuffle=false)

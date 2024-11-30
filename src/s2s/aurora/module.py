@@ -11,10 +11,9 @@ from tqdm import tqdm
 from s2s.aurora.model.aurora import Aurora, AuroraSmall, AuroraHighRes
 from s2s.aurora.batch import Batch, Metadata
 from s2s.aurora.rollout import rollout
-from s2s.utils.lr_scheduler import LinearWarmupCosineAnnealingLR
+from s2s.utils.lr_scheduler import LinearWarmupCosineAnnealingLR, LinearWarmupConstantLR
 from s2s.utils.metrics import (
     lat_weighted_acc,
-    lat_weighted_mse,
     lat_weighted_rmse,
     acc_spatial_map,
     rmse_spatial_map,
@@ -44,52 +43,38 @@ class GlobalForecastModule(LightningModule):
         version: int = 0,
         update_statistics: bool = False,
         delta_time: int = 6,
-        alpha: float = 0.25, 
-        beta: float = 1.0,
-        gamma: float = 2.0,
-        lr: float = 5e-4,
-        beta_1: float = 0.9,
-        beta_2: float = 0.99,
-        weight_decay: float = 1e-5,
-        warmup_epochs: int = 10000,
-        max_epochs: int = 200000,
-        warmup_start_lr: float = 1e-8,
-        eta_min: float = 1e-8,
-        patch_size: int = 16,
-        embed_dim: int = 64,
-        depth: int = 8,
-        decoder_depth: int = 2,
-        num_heads: int = 16,
-        mlp_ratio: int = 4,
+        use_activation_checkpointing: bool = False,
         drop_path: float = 0.1,
         drop_rate: float = 0.1,
-        parallel_patch_embed: bool = False
+        optim_lr: float = 5e-5,
+        optim_beta_1: float = 0.9,
+        optim_beta_2: float = 0.999,
+        optim_weight_decay: float = 5e-6,
+        optim_warmup_steps: int = 10000,
+        optim_max_steps: int = 200000,
+        optim_warmup_start_lr: float = 1e-8,
+        mae_alpha: float = 0.25, 
+        mae_beta: float = 1.0,
+        mae_gamma: float = 2.0,
     ):
         super().__init__()
         self.pretrained_path = pretrained_path
         self.version = version
         self.update_statistics = update_statistics
         self.delta_time = delta_time
-        self.lr = lr
-        self.alpha = alpha
-        self.beta = beta
-        self.gamma = gamma
-        self.beta_1 = beta_1
-        self.beta_2 = beta_2
-        self.weight_decay = weight_decay
-        self.warmup_epochs = warmup_epochs
-        self.max_epochs = max_epochs
-        self.warmup_start_lr = warmup_start_lr
-        self.eta_min = eta_min
-        self.patch_size = patch_size
-        self.embed_dim = embed_dim
-        self.depth = depth
-        self.decoder_depth = decoder_depth
-        self.num_heads = num_heads
-        self.mlp_ratio = mlp_ratio
+        self.use_activation_checkpointing = use_activation_checkpointing
         self.drop_path = drop_path
         self.drop_rate = drop_rate
-        self.parallel_patch_embed = parallel_patch_embed
+        self.optim_lr = optim_lr
+        self.optim_beta_1 = optim_beta_1
+        self.optim_beta_2 = optim_beta_2
+        self.optim_weight_decay = optim_weight_decay
+        self.optim_warmup_steps = optim_warmup_steps
+        self.optim_max_steps = optim_max_steps
+        self.optim_warmup_start_lr = optim_warmup_start_lr
+        self.mae_alpha = mae_alpha
+        self.mae_beta = mae_beta
+        self.mae_gamma = mae_gamma
         self.surf_stats = {}
         self.atmos_stats = {}
         self.plot_variables = []
@@ -105,11 +90,12 @@ class GlobalForecastModule(LightningModule):
     def init_metrics(self):
         assert self.lat is not None, 'Latitude values not initialized yet.'
         assert self.lon is not None, 'Longitude values not initialized yet.'
-        self.train_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.alpha, self.beta, self.gamma)
-        self.val_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.alpha, self.beta, self.gamma)
+        self.train_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
+        self.val_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
         self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat)
         self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat)
         self.test_rmse_spatial_map = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)))
+        self.test_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
         self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat)
         self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat)
         self.test_acc_spatial_map = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)))
@@ -127,7 +113,9 @@ class GlobalForecastModule(LightningModule):
                 atmos_vars=atmos_vars,
                 surf_stats=surf_stats,
                 atmos_stats=atmos_stats,
-                delta_time=self.delta_time
+                delta_time=self.delta_time,
+                drop_path=self.drop_path,
+                drop_rate=self.drop_rate
             )
         elif self.version == 1:
             self.net = AuroraSmall(
@@ -136,8 +124,9 @@ class GlobalForecastModule(LightningModule):
                 atmos_vars=atmos_vars,
                 surf_stats=surf_stats,
                 atmos_stats=atmos_stats,
-                delta_time=self.delta_time
-
+                delta_time=self.delta_time,
+                drop_path=self.drop_path,
+                drop_rate=self.drop_rate
             )
         elif self.version == 2:
             self.net = AuroraHighRes(
@@ -145,13 +134,18 @@ class GlobalForecastModule(LightningModule):
                 static_vars=static_vars,
                 surf_stats=surf_stats,
                 atmos_stats=atmos_stats,
-                delta_time=self.delta_time
+                delta_time=self.delta_time,
+                drop_path=self.drop_path,
+                drop_rate=self.drop_rate
             )
         else:
             raise ValueError(f"Invalid version number: {self.version}. Must be 0: Aurora, 1: AuroraSmall, or 2: AuroraHighRes.")
         
         if len(self.pretrained_path) > 0:
             self.load_pretrained_weights(self.pretrained_path)
+        
+        if self.use_activation_checkpointing:
+            self.net.configure_activation_checkpointing()
     
     def load_pretrained_weights(self, path):
         self.net.load_checkpoint_local(path)
@@ -312,21 +306,21 @@ class GlobalForecastModule(LightningModule):
         
         rollout_steps = int(lead_times[0][-1] // self.delta_time)
         yield_steps = (lead_times[0] // self.delta_time) - 1
-        with torch.no_grad():
-            for idx, output_batch in enumerate(rollout(self.net, input_batch, steps=rollout_steps, yield_intermediate=True, yield_steps=yield_steps)):
-                preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
-                assert (pred_timestamps == output_timestamps[:,idx]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,idx]}'
-                target = y[:, idx]
-                clim = climatology[:,idx]
-                if target.shape[-2:] != preds.shape[-2:]:
-                    if not self.train_resolution_warning_printed:
-                        print(f'Warning: Found mismatch in resolutions target: {target.shape}, prediction: {preds.shape}. Subsetting target to match preds.')
-                        self.train_resolution_warning_printed = True
-                    target = target[..., :preds.shape[-2], :preds.shape[-1]]
-            
-                self.val_variable_weighted_mae.update(preds, target)
-                self.val_lat_weighted_rmse.update(preds, target)
-                self.val_lat_weighted_acc.update(preds, target, clim)
+        for idx, output_batch in enumerate(rollout(self.net, input_batch, steps=rollout_steps, yield_intermediate=True, yield_steps=yield_steps)):
+            preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
+            assert (pred_timestamps == output_timestamps[:,idx]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,idx]}'
+            target = y[:, idx]
+            clim = climatology[:,idx]
+            if target.shape[-2:] != preds.shape[-2:]:
+                if not self.train_resolution_warning_printed:
+                    print(f'Warning: Found mismatch in resolutions target: {target.shape}, prediction: {preds.shape}. Subsetting target to match preds.')
+                    self.train_resolution_warning_printed = True
+                target = target[..., :preds.shape[-2], :preds.shape[-1]]
+                clim = clim[..., :preds.shape[-2], :preds.shape[-1]]
+
+            self.val_variable_weighted_mae.update(preds, target)
+            self.val_lat_weighted_rmse.update(preds, target)
+            self.val_lat_weighted_acc.update(preds, target, clim)
         
     def on_validation_epoch_end(self):
         self.val_resolution_warning_printed = False
@@ -359,8 +353,7 @@ class GlobalForecastModule(LightningModule):
         input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
         
         rollout_steps = int(lead_times[0][-1] // self.delta_time)
-        with torch.no_grad():
-            output_batch = rollout(self.net, input_batch, steps=rollout_steps, yield_intermediate=False)
+        output_batch = rollout(self.net, input_batch, steps=rollout_steps, yield_intermediate=False)
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
         
         assert (pred_timestamps == output_timestamps[:,-1]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,-1]}'
@@ -374,8 +367,8 @@ class GlobalForecastModule(LightningModule):
                 self.test_resolution_warning_printed = True
             target = target[..., :preds.shape[-2], :preds.shape[-1]]
             clim = clim[..., :preds.shape[-2], :preds.shape[-1]]
-                      
-        self.test_lat_weighted_mse.update(preds, target)
+
+        self.test_variable_weighted_mae.update(preds, target)              
         self.test_lat_weighted_rmse.update(preds, target)
         self.test_rmse_spatial_map.update(preds, target)
 
@@ -383,14 +376,14 @@ class GlobalForecastModule(LightningModule):
         self.test_acc_spatial_map.update(preds, target, clim)
 
     def on_test_epoch_end(self):
-        w_mse = self.test_lat_weighted_mse.compute()
+        var_w_mae = self.test_variable_weighted_mae.compute()
         w_rmse = self.test_lat_weighted_rmse.compute()
         w_acc = self.test_lat_weighted_acc.compute()
         rmse_spatial_maps = self.test_rmse_spatial_map.compute()
         acc_spatial_maps = self.test_acc_spatial_map.compute()
 
         #scalar metrics
-        loss_dict = {**w_mse, **w_rmse, **w_acc}
+        loss_dict = {**var_w_mae, **w_rmse, **w_acc}
         for var in loss_dict.keys():
             self.log(
                 "test/" + var,
@@ -421,7 +414,7 @@ class GlobalForecastModule(LightningModule):
                         else:
                             plot_spatial_map_with_basemap(data=map, lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
             
-        self.test_lat_weighted_mse.reset()
+        self.test_variable_weighted_mae.reset()
         self.test_lat_weighted_rmse.reset()
         self.test_lat_weighted_acc.reset()
         self.test_acc_spatial_map.reset()
@@ -430,38 +423,28 @@ class GlobalForecastModule(LightningModule):
 
     #optimizer definition - will be used to optimize the network based
     def configure_optimizers(self):
-        decay = []
-        no_decay = []
-        for name, m in self.named_parameters():
-            if "var_embed" in name or "pos_embed" in name or "time_pos_embed" in name:
-                no_decay.append(m)
-            else:
-                decay.append(m)
-
         optimizer = torch.optim.AdamW(
-            [
-                {
-                    "params": decay,
-                    "lr": self.lr,
-                    "betas": (self.beta_1, self.beta_2),
-                    "weight_decay": self.weight_decay,
-                },
-                {
-                    "params": no_decay,
-                    "lr": self.lr,
-                    "betas": (self.beta_1, self.beta_2),
-                    "weight_decay": 0,
-                },
-            ]
+            params=self.parameters(),
+            lr=self.optim_lr,
+            betas=(self.optim_beta_1, self.optim_beta_2),
+            weight_decay=self.optim_weight_decay
         )
 
-        lr_scheduler = LinearWarmupCosineAnnealingLR(
-            optimizer,
-            self.warmup_epochs,
-            self.max_epochs,
-            self.warmup_start_lr,
-            self.eta_min,
+        # #pretraining
+        # lr_scheduler = LinearWarmupCosineAnnealingLR(
+        #     optimizer,
+        #     warmup_steps=self.optim_warmup_steps,
+        #     max_steps=self.optim_max_steps,
+        #     warmup_start_lr=self.optim_warmup_start_lr,
+        #     eta_min=self.optim_lr / 10,
+        # )
+
+        #finetuning
+        lr_scheduler = LinearWarmupConstantLR(
+            optimizer, 
+            warmup_steps=self.optim_warmup_steps
         )
+
         scheduler = {"scheduler": lr_scheduler, "interval": "step", "frequency": 1}
 
         return {"optimizer": optimizer, "lr_scheduler": scheduler}

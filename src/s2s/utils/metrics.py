@@ -135,15 +135,15 @@ class variable_weighted_mae(Metric):
         self.suffix = suffix
         self.surf_var_idxs = []
         self.atm_var_idxs = []
-        self.surf_var_weights = []
-        self.atm_var_weights = []
+        surf_var_weights = []
+        atm_var_weights = []
         for idx,v in enumerate(self.vars):
             if v in SURFACE_VARS:
                 self.surf_var_idxs.append(idx)
                 if v in NAME_TO_WEIGHT:
-                    self.surf_var_weights.append(NAME_TO_WEIGHT[v])
+                    surf_var_weights.append(NAME_TO_WEIGHT[v])
                 else:
-                    self.surf_var_weights.append(1)
+                    surf_var_weights.append(1)
             else:   
                 atm_var = '_'.join(v.split('_')[:-1])
                 pressure_level = v.split('_')[-1]
@@ -151,14 +151,14 @@ class variable_weighted_mae(Metric):
                 if atm_var in ATMOSPHERIC_VARS: 
                     self.atm_var_idxs.append(idx)
                     if atm_var in NAME_TO_WEIGHT:
-                        self.atm_var_weights.append(NAME_TO_WEIGHT[atm_var])
+                        atm_var_weights.append(NAME_TO_WEIGHT[atm_var])
                     else:
-                        self.atm_var_weights.append(1)
+                        atm_var_weights.append(1)
                 else:
                     raise ValueError(f"{v} could not be identified as a surface or atmospheric variable")                
-        
-        self.surf_var_weights = torch.tensor(self.surf_var_weights, dtype=torch.float32)
-        self.atm_var_weights = torch.tensor(self.atm_var_weights, dtype=torch.float32)
+    
+        self.register_buffer("surf_var_weights", torch.tensor(surf_var_weights, dtype=torch.float32))
+        self.register_buffer("atm_var_weights", torch.tensor(atm_var_weights, dtype=torch.float32))
 
     def update(self, preds: torch.Tensor, targets: torch.Tensor):
         surf_preds, atm_preds = preds[:,self.surf_var_idxs,:,:], preds[:,self.atm_var_idxs,:,:]
