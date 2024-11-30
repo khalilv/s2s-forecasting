@@ -1,7 +1,7 @@
 """Copyright (c) Microsoft Corporation. Licensed under the MIT license."""
 
 import dataclasses
-from typing import Generator
+from typing import Generator, Union
 
 import torch
 
@@ -11,16 +11,22 @@ from s2s.aurora.model.aurora import Aurora
 __all__ = ["rollout"]
 
 
-def rollout(model: Aurora, batch: Batch, steps: int) -> Batch:
+def rollout(model: Aurora, batch: Batch, steps: int, yield_intermediate: bool = False, yield_steps: list = []) -> Union[Generator[Batch, None, None], Batch]:
     """Perform a roll-out to make long-term predictions.
 
     Args:
         model (:class:`aurora.model.aurora.Aurora`): The model to roll out.
         batch (:class:`aurora.batch.Batch`): The batch to start the roll-out from.
         steps (int): The number of roll-out steps.
+        yield_intermediate (bool): If true, yield intermediate predictions.
+        yield_steps (list): List of steps to yield intermediate predictions on.
 
     Yields:
         :class:`aurora.batch.Batch`: The prediction after every step.
+    or
+    Returns: 
+        :class:`aurora.batch.Batch`: The final prediction after rolling out.
+
     """
     # We will need to concatenate data, so ensure that everything is already of the right form.
     # Use an arbitary parameter of the model to derive the data type and device.
@@ -29,8 +35,12 @@ def rollout(model: Aurora, batch: Batch, steps: int) -> Batch:
     batch = batch.crop(model.patch_size)
     batch = batch.to(p.device)
 
-    for _ in range(steps):
+    for step in range(steps):
         pred = model.forward(batch)
+
+        if yield_intermediate and step in yield_steps:
+            yield pred
+
         # Add the appropriate history so the model can be run on the prediction.
         batch = dataclasses.replace(
             pred,
@@ -43,4 +53,5 @@ def rollout(model: Aurora, batch: Batch, steps: int) -> Batch:
                 for k, v in pred.atmos_vars.items()
             },
         )
-    return pred
+    if not yield_intermediate:
+        return pred
