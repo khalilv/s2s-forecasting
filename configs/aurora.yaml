@@ -78,8 +78,8 @@ model:
   optim_beta_1: 0.9
   optim_beta_2: 0.999
   optim_weight_decay: 5e-6
-  optim_warmup_steps: 250
-  optim_max_steps: 10000
+  optim_warmup_steps: 750
+  optim_max_steps: 25000
   optim_warmup_start_lr: 0.0
   mae_alpha: 0.25
   mae_beta: 1.0
