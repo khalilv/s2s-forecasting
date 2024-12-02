@@ -274,7 +274,7 @@ class GlobalForecastModule(LightningModule):
         rollout_steps = int(lead_times[0][-1] // self.delta_time)
         yield_steps = (lead_times[0] // self.delta_time) - 1
         batch_loss = []
-        for idx, output_batch in enumerate(rollout(self.net, input_batch, steps=rollout_steps, yield_intermediate=True, yield_steps=yield_steps)):
+        for idx, output_batch in enumerate(rollout(self.net, input_batch, steps=rollout_steps, yield_steps=yield_steps)):
             preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
             assert (pred_timestamps == output_timestamps[:,idx]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,idx]}'
             target = y[:, idx]
@@ -306,7 +306,7 @@ class GlobalForecastModule(LightningModule):
         
         rollout_steps = int(lead_times[0][-1] // self.delta_time)
         yield_steps = (lead_times[0] // self.delta_time) - 1
-        for idx, output_batch in enumerate(rollout(self.net, input_batch, steps=rollout_steps, yield_intermediate=True, yield_steps=yield_steps)):
+        for idx, output_batch in enumerate(rollout(self.net, input_batch, steps=rollout_steps, yield_steps=yield_steps)):
             preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
             assert (pred_timestamps == output_timestamps[:,idx]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,idx]}'
             target = y[:, idx]

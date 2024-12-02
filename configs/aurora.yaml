@@ -76,8 +76,8 @@ model:
   update_statistics: false
   delta_time: 6
   use_activation_checkpointing: true
-  drop_path: 0.2
-  drop_rate: 0.2
+  drop_path: 0.1
+  drop_rate: 0.1
   optim_lr: 5e-5
   optim_beta_1: 0.9
   optim_beta_2: 0.999

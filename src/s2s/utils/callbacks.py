@@ -28,7 +28,7 @@ class GradientMonitor(pl.callbacks.Callback):
             )
             
             # Check for NaN or Inf gradients
-            if not torch.isfinite(gradient_norm):
+            if not torch.isfinite(torch.tensor(gradient_norm)):
                 trainer.logger.log_metrics(
                     {"gradient/issue": 1}, step=trainer.global_step
                 )
