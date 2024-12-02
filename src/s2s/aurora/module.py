@@ -353,7 +353,9 @@ class GlobalForecastModule(LightningModule):
         input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
         
         rollout_steps = int(lead_times[0][-1] // self.delta_time)
-        output_batch = rollout(self.net, input_batch, steps=rollout_steps, yield_intermediate=False)
+        yield_steps = (lead_times[0] // self.delta_time) - 1
+        rollout_batches = [rollout_batch for rollout_batch in rollout(self.net, input_batch, steps=rollout_steps, yield_steps=yield_steps[-1:])]
+        output_batch = rollout_batches[-1]
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
         
         assert (pred_timestamps == output_timestamps[:,-1]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,-1]}'

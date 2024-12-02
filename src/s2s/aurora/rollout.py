@@ -11,7 +11,7 @@ from s2s.aurora.model.aurora import Aurora
 __all__ = ["rollout"]
 
 
-def rollout(model: Aurora, batch: Batch, steps: int, yield_intermediate: bool = False, yield_steps: list = []) -> Union[Generator[Batch, None, None], Batch]:
+def rollout(model: Aurora, batch: Batch, steps: int, yield_steps: list = []) -> Generator[Batch, None, None]:
     """Perform a roll-out to make long-term predictions.
 
     Args:
@@ -22,10 +22,7 @@ def rollout(model: Aurora, batch: Batch, steps: int, yield_intermediate: bool = 
         yield_steps (list): List of steps to yield intermediate predictions on.
 
     Yields:
-        :class:`aurora.batch.Batch`: The prediction after every step.
-    or
-    Returns: 
-        :class:`aurora.batch.Batch`: The final prediction after rolling out.
+        :class:`aurora.batch.Batch`: The prediction at each yield step.
 
     """
     # We will need to concatenate data, so ensure that everything is already of the right form.
@@ -38,7 +35,7 @@ def rollout(model: Aurora, batch: Batch, steps: int, yield_intermediate: bool = 
     for step in range(steps):
         pred = model.forward(batch)
 
-        if yield_intermediate and step in yield_steps:
+        if step in yield_steps:
             yield pred
 
         # Add the appropriate history so the model can be run on the prediction.
@@ -53,5 +50,3 @@ def rollout(model: Aurora, batch: Batch, steps: int, yield_intermediate: bool = 
                 for k, v in pred.atmos_vars.items()
             },
         )
-    if not yield_intermediate:
-        return pred

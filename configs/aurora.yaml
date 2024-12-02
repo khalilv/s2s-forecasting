@@ -16,7 +16,7 @@ trainer:
       # find_unused_parameters: true
   
   min_epochs: 1
-  max_epochs: 20
+  max_epochs: 30
   enable_progress_bar: true
 
   sync_batchnorm: true
@@ -40,6 +40,10 @@ trainer:
     - class_path: pytorch_lightning.callbacks.LearningRateMonitor
       init_args:
         logging_interval: "step"
+    
+    - class_path: s2s.utils.callbacks.GradientMonitor
+      init_args:
+        log_every_n_steps: 50
 
     - class_path: pytorch_lightning.callbacks.ModelCheckpoint
       init_args:
@@ -74,12 +78,12 @@ model:
   use_activation_checkpointing: true
   drop_path: 0.2
   drop_rate: 0.2
-  optim_lr: 5e-4
+  optim_lr: 5e-5
   optim_beta_1: 0.9
   optim_beta_2: 0.999
   optim_weight_decay: 5e-6
-  optim_warmup_steps: 750
-  optim_max_steps: 25000
+  optim_warmup_steps: 250
+  optim_max_steps: 15000
   optim_warmup_start_lr: 0.0
   mae_alpha: 0.25
   mae_beta: 1.0
