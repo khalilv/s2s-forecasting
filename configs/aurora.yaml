@@ -6,7 +6,7 @@ trainer:
 
   precision: 32
 
-  devices: 2
+  devices: 4
   num_nodes: 1
   accelerator: gpu
   strategy:     
@@ -16,7 +16,7 @@ trainer:
       # find_unused_parameters: true
   
   min_epochs: 1
-  max_epochs: 50
+  max_epochs: 20
   enable_progress_bar: true
 
   sync_batchnorm: true
@@ -72,14 +72,14 @@ model:
   update_statistics: false
   delta_time: 6
   use_activation_checkpointing: true
-  drop_path: 0.0
-  drop_rate: 0.0
-  optim_lr: 5e-5
+  drop_path: 0.2
+  drop_rate: 0.2
+  optim_lr: 5e-4
   optim_beta_1: 0.9
   optim_beta_2: 0.999
   optim_weight_decay: 5e-6
-  optim_warmup_steps: 1000
-  optim_max_steps: 150000
+  optim_warmup_steps: 250
+  optim_max_steps: 10000
   optim_warmup_start_lr: 0.0
   mae_alpha: 0.25
   mae_beta: 1.0
@@ -182,8 +182,8 @@ data:
   history_size: 1
   history_step: 1
   hrs_each_step: 6
-  buffer_size: 100
-  batch_size: 1
+  buffer_size: 200
+  batch_size: 32
   mem_load: 1.0
   num_workers: 2
   pin_memory: true

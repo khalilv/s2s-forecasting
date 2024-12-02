@@ -92,8 +92,8 @@ class GlobalForecastModule(LightningModule):
         assert self.lon is not None, 'Longitude values not initialized yet.'
         self.train_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
         self.val_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
-        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat)
-        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat)
+        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, suffix='12h')
+        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, suffix='12h')
         self.test_rmse_spatial_map = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)))
         self.test_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
         self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat)
@@ -319,8 +319,8 @@ class GlobalForecastModule(LightningModule):
                 clim = clim[..., :preds.shape[-2], :preds.shape[-1]]
 
             self.val_variable_weighted_mae.update(preds, target)
-            self.val_lat_weighted_rmse.update(preds, target)
-            self.val_lat_weighted_acc.update(preds, target, clim)
+        self.val_lat_weighted_rmse.update(preds, target)
+        self.val_lat_weighted_acc.update(preds, target, clim)
         
     def on_validation_epoch_end(self):
         self.val_resolution_warning_printed = False
@@ -431,19 +431,19 @@ class GlobalForecastModule(LightningModule):
         )
 
         # #pretraining
-        # lr_scheduler = LinearWarmupCosineAnnealingLR(
-        #     optimizer,
-        #     warmup_steps=self.optim_warmup_steps,
-        #     max_steps=self.optim_max_steps,
-        #     warmup_start_lr=self.optim_warmup_start_lr,
-        #     eta_min=self.optim_lr / 10,
-        # )
-
-        #finetuning
-        lr_scheduler = LinearWarmupConstantLR(
-            optimizer, 
-            warmup_steps=self.optim_warmup_steps
+        lr_scheduler = LinearWarmupCosineAnnealingLR(
+            optimizer,
+            warmup_steps=self.optim_warmup_steps,
+            max_steps=self.optim_max_steps,
+            warmup_start_lr=self.optim_warmup_start_lr,
+            eta_min=self.optim_lr / 10,
         )
+
+        # #finetuning
+        # lr_scheduler = LinearWarmupConstantLR(
+        #     optimizer, 
+        #     warmup_steps=self.optim_warmup_steps
+        # )
 
         scheduler = {"scheduler": lr_scheduler, "interval": "step", "frequency": 1}
 
