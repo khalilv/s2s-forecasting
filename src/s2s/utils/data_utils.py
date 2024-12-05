@@ -120,6 +120,7 @@ def collate_fn(batch):
     out_variables = batch[7][0]
     input_timestamps = np.array(batch[8])
     output_timestamps = np.array(batch[9])
+    remaining_predict_steps = np.array(batch[10])
     return (
         inp,
         static,
@@ -131,8 +132,8 @@ def collate_fn(batch):
         out_variables,
         input_timestamps,
         output_timestamps,
+        remaining_predict_steps
     )
-
 
 def leap_year_data_adjustment(data, hrs_per_step):
     leap_year_steps = HRS_PER_LEAP_YEAR // hrs_per_step
@@ -265,3 +266,23 @@ def plot_spatial_map_with_basemap(data, lon, lat, title=None, filename=None, zla
     plt.close()
 
     return
+
+
+def zero_pad(input, pad_rows=1, pad_dim=1):
+    pad_shape = list(input.shape)
+    pad_shape[pad_dim] = pad_rows
+    if isinstance(input, torch.Tensor):
+        pad_tensor = torch.zeros(
+            pad_shape,
+            dtype=input.dtype,
+            device=input.device
+        )
+        return torch.cat((input, pad_tensor), dim=pad_dim)
+    elif isinstance(input, np.ndarray):
+        pad_array = np.zeros(
+            pad_shape,
+            dtype=input.dtype
+        )
+        return np.concatenate((input, pad_array), axis=pad_dim)
+    else:
+        raise TypeError("Unsupported tensor type. Must be torch.Tensor or np.ndarray.")

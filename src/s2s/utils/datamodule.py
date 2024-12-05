@@ -9,12 +9,12 @@ import numpy as np
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, IterableDataset
 from torchvision.transforms import transforms
-
-from s2s.utils.data_utils import collate_fn, remove_year
+from multiprocessing import Manager
+from s2s.utils.data_utils import collate_fn
 from s2s.utils.dataset import (
     Forecast,
     ZarrReader,
-    ShuffleIterableDataset,
+    ReplayBufferDataset,
 )
 
 class GlobalForecastDataModule(LightningDataModule):
@@ -114,6 +114,17 @@ class GlobalForecastDataModule(LightningDataModule):
         self.data_train: Optional[IterableDataset] = None
         self.data_val: Optional[IterableDataset] = None
         self.data_test: Optional[IterableDataset] = None
+
+        self.manager = Manager()
+        self.shared_buffer = self.manager.Queue(self.batch_size)
+
+    def clear_shared_buffer(self):
+        print('Info: Clearing shared buffer.')
+        while not self.shared_buffer.empty():
+            self.shared_buffer.get()        
+            
+    def add_sample_to_shared_buffer(self, sample):
+        self.shared_buffer.put(sample)
         
     def get_normalization_stats(self, variables, partition = ""):
         statistics = xr.open_zarr(os.path.join(self.root_dir, partition, "statistics.zarr"), chunks='auto')
@@ -129,7 +140,7 @@ class GlobalForecastDataModule(LightningDataModule):
     def setup(self, stage: Optional[str] = None):
         # load datasets only if they're not loaded already
         if not self.data_train and not self.data_val and not self.data_test:
-            self.data_train = ShuffleIterableDataset(
+            self.data_train = ReplayBufferDataset(
                 Forecast(
                     ZarrReader(
                         file_list=self.lister_train,
@@ -151,6 +162,7 @@ class GlobalForecastDataModule(LightningDataModule):
                     mem_load=self.mem_load
                 ),
                 buffer_size=self.buffer_size,
+                shared_buffer=self.shared_buffer
             )
 
             self.data_val = Forecast(

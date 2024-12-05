@@ -206,7 +206,7 @@ class Forecast(IterableDataset):
                     if self.normalize_data:
                         yield self.in_transforms(input), self.static_transforms(static), self.output_transforms(output), climatology, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps
                     else:
-                        yield input, static, output, climatology, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps
+                        yield input, static, output, climatology, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps, len(lead_times)
 
 class ShuffleIterableDataset(IterableDataset):
     def __init__(self, dataset, buffer_size: int) -> None:
@@ -227,3 +227,45 @@ class ShuffleIterableDataset(IterableDataset):
         random.shuffle(buf)
         while buf:
             yield buf.pop()
+
+
+class ReplayBufferDataset(IterableDataset):
+    def __init__(self, dataset, buffer_size: int, shared_buffer) -> None:
+        """
+        Args:
+            dataset (IterableDataset): Base dataset to draw new samples from.
+            buffer_size (int): Maximum number of samples to hold in the replay buffer. Samples will be drawn randomly.
+            shared_buffer (Queue): Queue holding model predictions to sample from. 
+        """
+        super().__init__()
+        assert buffer_size > 0, "Buffer size must be positive."
+        self.dataset = dataset
+        self.shared_buffer = shared_buffer
+        self.buffer_size = buffer_size
+    
+    def __iter__(self):
+        dataset_iterable = iter(self.dataset)
+        replay_buffer = []
+        dataset_samples = 0
+        while len(replay_buffer) < self.buffer_size:
+            try:
+                dataset_samples += 1
+                sample = next(dataset_iterable)
+                replay_buffer.append(sample)
+            except StopIteration:
+                print('Info: Dataset exhausted. No more samples available.')
+                break
+        print(f'Info: Initialized replay buffer with {dataset_samples} samples from the dataset.')
+    
+        while len(replay_buffer) > 0:
+            idx = random.randint(0, len(replay_buffer) - 1)
+            yield replay_buffer[idx]
+            if not self.shared_buffer.empty():
+                replay_buffer[idx] = self.shared_buffer.get()
+            else:
+                try:
+                    sample = next(dataset_iterable)
+                    replay_buffer[idx] = sample
+                except StopIteration:
+                    print('Info: Dataset exhausted. No more samples available.')
+
