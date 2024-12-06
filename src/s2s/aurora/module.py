@@ -62,7 +62,6 @@ class GlobalForecastModule(LightningModule):
         mae_gamma: float = 2.0,
         monitor_val_step: int = 1,
         buffer_lead_time_thresholds: list = [[0,0]],
-        buffer_refresh_rate: int = 10,
     ):
         super().__init__()
         self.pretrained_path = pretrained_path
@@ -87,7 +86,6 @@ class GlobalForecastModule(LightningModule):
         self.mae_gamma = mae_gamma
         self.monitor_val_step = monitor_val_step
         self.buffer_lead_time_thresholds = sorted(buffer_lead_time_thresholds, key=lambda x: x[0])
-        self.buffer_refresh_rate = buffer_refresh_rate
         self.surf_stats = {}
         self.atmos_stats = {}
         self.plot_variables = []
@@ -358,32 +356,30 @@ class GlobalForecastModule(LightningModule):
                     prog_bar=True,
                 )
             self.train_variable_weighted_mae.reset()
-            if self.global_step == 0 or self.global_step % self.buffer_refresh_rate != 0:
-                with torch.no_grad():
-                    x_next, input_timestamps_next = self.deconstruct_aurora_batch(rollout_batch.to("cpu"), out_variables, preserve_history=True)
-                    x_next = x_next[remaining_predict_steps > 1]
-                    input_timestamps_next = np.concatenate((input_timestamps[remaining_predict_steps > 1,1:], input_timestamps_next[remaining_predict_steps > 1].reshape(-1, 1)), axis=1)
-                    
-                    y_next = y[remaining_predict_steps > 1, 1:]
-                    lead_times_next = lead_times[remaining_predict_steps > 1, 1:]
-                    output_timestamps_next = output_timestamps[remaining_predict_steps > 1, 1:]
-                    
-                    static = static.to("cpu")
-                    y_next = zero_pad(y_next, pad_rows=y.shape[1] - y_next.shape[1], pad_dim=1).to("cpu")
-                    lead_times_next = zero_pad(lead_times_next, pad_rows=lead_times.shape[1] - lead_times_next.shape[1], pad_dim=1).to("cpu")
-                    output_timestamps_next = zero_pad(output_timestamps_next, pad_rows=output_timestamps.shape[1] - output_timestamps_next.shape[1], pad_dim=1)           
-                    
-                    remaining_predict_steps_next = remaining_predict_steps[remaining_predict_steps > 1] - 1
-                    for i in range(x_next.shape[0]):
-                        for j, (step, lt) in enumerate(self.buffer_lead_time_thresholds):
-                            if self.global_step < step:
-                                if lead_times_next[i][0] <= lt:
-                                    self.trainer.datamodule.add_sample_to_shared_buffer((x_next[i], static[i], y_next[i], None, lead_times_next[i], variables, static_variables, out_variables, input_timestamps_next[i], output_timestamps_next[i], remaining_predict_steps_next[i]))
-                                break
-                            elif j == len(self.buffer_lead_time_thresholds) -1:
+           
+            with torch.no_grad():
+                x_next, input_timestamps_next = self.deconstruct_aurora_batch(rollout_batch.to("cpu"), out_variables, preserve_history=True)
+                x_next = x_next[remaining_predict_steps > 1]
+                input_timestamps_next = np.concatenate((input_timestamps[remaining_predict_steps > 1,1:], input_timestamps_next[remaining_predict_steps > 1].reshape(-1, 1)), axis=1)
+                
+                y_next = y[remaining_predict_steps > 1, 1:]
+                lead_times_next = lead_times[remaining_predict_steps > 1, 1:]
+                output_timestamps_next = output_timestamps[remaining_predict_steps > 1, 1:]
+                
+                static = static.to("cpu")
+                y_next = zero_pad(y_next, pad_rows=y.shape[1] - y_next.shape[1], pad_dim=1).to("cpu")
+                lead_times_next = zero_pad(lead_times_next, pad_rows=lead_times.shape[1] - lead_times_next.shape[1], pad_dim=1).to("cpu")
+                output_timestamps_next = zero_pad(output_timestamps_next, pad_rows=output_timestamps.shape[1] - output_timestamps_next.shape[1], pad_dim=1)           
+                
+                remaining_predict_steps_next = remaining_predict_steps[remaining_predict_steps > 1] - 1
+                for i in range(x_next.shape[0]):
+                    for j, (step, lt) in enumerate(self.buffer_lead_time_thresholds):
+                        if self.global_step < step:
+                            if lead_times_next[i][0] <= lt:
                                 self.trainer.datamodule.add_sample_to_shared_buffer((x_next[i], static[i], y_next[i], None, lead_times_next[i], variables, static_variables, out_variables, input_timestamps_next[i], output_timestamps_next[i], remaining_predict_steps_next[i]))
-            else:
-                self.trainer.datamodule.clear_shared_buffer()
+                            break
+                        elif j == len(self.buffer_lead_time_thresholds) -1:
+                            self.trainer.datamodule.add_sample_to_shared_buffer((x_next[i], static[i], y_next[i], None, lead_times_next[i], variables, static_variables, out_variables, input_timestamps_next[i], output_timestamps_next[i], remaining_predict_steps_next[i]))
             return loss_dict['var_w_mae']
         else:
             raise ValueError("Training phase must be 0 or 1.") 

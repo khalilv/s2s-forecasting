@@ -47,7 +47,8 @@ class GlobalForecastDataModule(LightningDataModule):
         climatology_test,
         in_variables,
         static_variables,
-        buffer_size = 10000,
+        buffer_size: int = 100,
+        refresh_rate: Optional[int] = None,
         out_variables = None,
         plot_variables = None,
         predict_size: int = 1,
@@ -88,6 +89,7 @@ class GlobalForecastDataModule(LightningDataModule):
         self.in_variables = in_variables
         self.static_variables = static_variables
         self.buffer_size = buffer_size
+        self.refresh_rate = refresh_rate
         self.predict_size = predict_size
         self.predict_step = predict_step       
         self.history_size = history_size
@@ -117,11 +119,6 @@ class GlobalForecastDataModule(LightningDataModule):
 
         self.manager = Manager()
         self.shared_buffer = self.manager.Queue(self.batch_size)
-
-    def clear_shared_buffer(self):
-        print('Info: Clearing shared buffer.')
-        while not self.shared_buffer.empty():
-            self.shared_buffer.get()        
             
     def add_sample_to_shared_buffer(self, sample):
         self.shared_buffer.put(sample)
@@ -162,7 +159,8 @@ class GlobalForecastDataModule(LightningDataModule):
                     mem_load=self.mem_load
                 ),
                 buffer_size=self.buffer_size,
-                shared_buffer=self.shared_buffer
+                shared_buffer=self.shared_buffer, 
+                refresh_rate = int(self.refresh_rate*self.batch_size/self.num_workers) if self.refresh_rate else None,
             )
 
             self.data_val = Forecast(
