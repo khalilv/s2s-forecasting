@@ -118,11 +118,12 @@ class GlobalForecastDataModule(LightningDataModule):
         self.data_test: Optional[IterableDataset] = None
 
         self.manager = Manager()
-        self.shared_buffer = self.manager.Queue(self.batch_size)
-            
+        self.shared_buffers = {worker_id: self.manager.Queue(self.batch_size) for worker_id in range(max(self.num_workers,1))}
+
     def add_sample_to_shared_buffer(self, sample):
-        self.shared_buffer.put(sample)
-        
+        worker_id = sample[-1]
+        self.shared_buffers[worker_id].put(sample)
+
     def get_normalization_stats(self, variables, partition = ""):
         statistics = xr.open_zarr(os.path.join(self.root_dir, partition, "statistics.zarr"), chunks='auto')
         normalize_mean = np.array([statistics[f"{var}_mean"] for var in variables])
@@ -159,8 +160,8 @@ class GlobalForecastDataModule(LightningDataModule):
                     mem_load=self.mem_load
                 ),
                 buffer_size=self.buffer_size,
-                shared_buffer=self.shared_buffer, 
-                refresh_rate = int(self.refresh_rate*self.batch_size/self.num_workers) if self.refresh_rate else None,
+                shared_buffers=self.shared_buffers, 
+                refresh_rate = int(self.refresh_rate*self.batch_size/max(self.num_workers,1)) if self.refresh_rate else None,
             )
 
             self.data_val = Forecast(

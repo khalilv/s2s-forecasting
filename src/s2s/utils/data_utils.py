@@ -121,6 +121,7 @@ def collate_fn(batch):
     input_timestamps = np.array(batch[8])
     output_timestamps = np.array(batch[9])
     remaining_predict_steps = np.array(batch[10])
+    worker_ids = np.array(batch[11])
     return (
         inp,
         static,
@@ -132,7 +133,8 @@ def collate_fn(batch):
         out_variables,
         input_timestamps,
         output_timestamps,
-        remaining_predict_steps
+        remaining_predict_steps,
+        worker_ids
     )
 
 def leap_year_data_adjustment(data, hrs_per_step):

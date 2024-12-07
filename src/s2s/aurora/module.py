@@ -291,7 +291,7 @@ class GlobalForecastModule(LightningModule):
     
     def training_step(self, batch: Any, batch_idx: int):
         if self.training_phase == 0:
-            x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _ = batch
+            x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
             
             if not torch.all(lead_times == lead_times[0]):
                 raise NotImplementedError("Variable lead times not implemented yet.") 
@@ -324,7 +324,7 @@ class GlobalForecastModule(LightningModule):
             )
             return average_loss
         elif self.training_phase == 1:
-            x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, remaining_predict_steps = batch
+            x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, remaining_predict_steps, worker_ids = batch
             
             input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
             output_batch = self.net.forward(input_batch)
@@ -372,20 +372,21 @@ class GlobalForecastModule(LightningModule):
                 output_timestamps_next = zero_pad(output_timestamps_next, pad_rows=output_timestamps.shape[1] - output_timestamps_next.shape[1], pad_dim=1)           
                 
                 remaining_predict_steps_next = remaining_predict_steps[remaining_predict_steps > 1] - 1
+                worker_ids_next = worker_ids[remaining_predict_steps > 1]
                 for i in range(x_next.shape[0]):
                     for j, (step, lt) in enumerate(self.buffer_lead_time_thresholds):
                         if self.global_step < step:
                             if lead_times_next[i][0] <= lt:
-                                self.trainer.datamodule.add_sample_to_shared_buffer((x_next[i], static[i], y_next[i], None, lead_times_next[i], variables, static_variables, out_variables, input_timestamps_next[i], output_timestamps_next[i], remaining_predict_steps_next[i]))
+                                self.trainer.datamodule.add_sample_to_shared_buffer((x_next[i], static[i], y_next[i], None, lead_times_next[i], variables, static_variables, out_variables, input_timestamps_next[i], output_timestamps_next[i], remaining_predict_steps_next[i], worker_ids_next[i]))
                             break
                         elif j == len(self.buffer_lead_time_thresholds) -1:
-                            self.trainer.datamodule.add_sample_to_shared_buffer((x_next[i], static[i], y_next[i], None, lead_times_next[i], variables, static_variables, out_variables, input_timestamps_next[i], output_timestamps_next[i], remaining_predict_steps_next[i]))
+                            self.trainer.datamodule.add_sample_to_shared_buffer((x_next[i], static[i], y_next[i], None, lead_times_next[i], variables, static_variables, out_variables, input_timestamps_next[i], output_timestamps_next[i], remaining_predict_steps_next[i], worker_ids_next[i]))
             return loss_dict['var_w_mae']
         else:
             raise ValueError("Training phase must be 0 or 1.") 
     
     def validation_step(self, batch: Any, batch_idx: int):
-        x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _ = batch
+        x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
         
         if not torch.all(lead_times == lead_times[0]):
             raise NotImplementedError("Variable lead times not implemented yet.")
@@ -434,7 +435,7 @@ class GlobalForecastModule(LightningModule):
         self.val_lat_weighted_acc.reset()
 
     def test_step(self, batch: Any, batch_idx: int):
-        x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _ = batch
+        x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
         
         print(input_timestamps, output_timestamps)
         
