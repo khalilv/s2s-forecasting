@@ -9,7 +9,6 @@ import numpy as np
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, IterableDataset
 from torchvision.transforms import transforms
-from multiprocessing import Manager
 from s2s.utils.data_utils import collate_fn
 from s2s.utils.dataset import (
     Forecast,
@@ -117,12 +116,9 @@ class GlobalForecastDataModule(LightningDataModule):
         self.data_val: Optional[IterableDataset] = None
         self.data_test: Optional[IterableDataset] = None
 
-        self.manager = Manager()
-        self.shared_buffers = {worker_id: self.manager.Queue(self.batch_size) for worker_id in range(max(self.num_workers,1))}
-
     def add_sample_to_shared_buffer(self, sample):
         worker_id = sample[-1]
-        self.shared_buffers[worker_id].put(sample)
+        self.data_train.shared_queues[worker_id].put(sample)
 
     def get_normalization_stats(self, variables, partition = ""):
         statistics = xr.open_zarr(os.path.join(self.root_dir, partition, "statistics.zarr"), chunks='auto')
@@ -136,8 +132,7 @@ class GlobalForecastDataModule(LightningDataModule):
         return lat, lon
 
     def setup(self, stage: Optional[str] = None):
-        # load datasets only if they're not loaded already
-        if not self.data_train and not self.data_val and not self.data_test:
+        if stage == 'fit':
             self.data_train = ReplayBufferDataset(
                 Forecast(
                     ZarrReader(
@@ -160,10 +155,9 @@ class GlobalForecastDataModule(LightningDataModule):
                     mem_load=self.mem_load
                 ),
                 buffer_size=self.buffer_size,
-                shared_buffers=self.shared_buffers, 
+                num_shared_queues=max(self.num_workers,1),
                 refresh_rate = int(self.refresh_rate*self.batch_size/max(self.num_workers,1)) if self.refresh_rate else None,
             )
-
             self.data_val = Forecast(
                 ZarrReader(
                     file_list=self.lister_val,
@@ -186,7 +180,7 @@ class GlobalForecastDataModule(LightningDataModule):
                 mem_load=self.mem_load
             )
                 
-
+        if stage == 'test':
             self.data_test = Forecast(
                 ZarrReader(
                     file_list=self.lister_test,

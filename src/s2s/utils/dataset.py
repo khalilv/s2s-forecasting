@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from torch.utils.data import IterableDataset
 from typing import Optional
+from torch.multiprocessing import Queue
 
 class ZarrReader(IterableDataset):
     """Dataset for loading zarr files.
@@ -230,22 +231,28 @@ class ShuffleIterableDataset(IterableDataset):
 
 
 class ReplayBufferDataset(IterableDataset):
-    def __init__(self, dataset, buffer_size: int, refresh_rate: Optional[int] = None, shared_buffers = None) -> None:
+    def __init__(self, dataset, buffer_size: int, num_shared_queues: int, refresh_rate: Optional[int] = None) -> None:
         """
         Args:
             dataset (IterableDataset): Base dataset to draw new samples from.
             buffer_size (int): Maximum number of samples to hold in the replay buffer. Samples will be drawn randomly.
+            num_shared_queues (int): Number of queues for workers to sample from into the replay buffer. Used when data is to be dynamically added into the dataset during training 
             refresh_rate Optional(int): Rate to clear the replay buffer and fill it with new samples from the dataset. If none then never clear.
-            shared_buffer (Queue): Queue holding model predictions to sample from. 
         """
         super().__init__()
-        assert buffer_size > 0, "Buffer size must be positive."
+        assert buffer_size > 0, "Buffer size must be > 0."
+        assert num_shared_queues > 0, "Number of shared queues must be > 0."
         self.dataset = dataset
-        self.shared_buffers = shared_buffers
         self.buffer_size = buffer_size
         self.refresh_rate = refresh_rate
-    
+        self.shared_queues = {worker_id: Queue() for worker_id in range(num_shared_queues)}
+
     def __iter__(self):
+        worker_info = torch.utils.data.get_worker_info()
+        worker_id = worker_info.id if worker_info else 0
+
+        shared_queue = self.shared_queues[worker_id]
+
         dataset_iterable = iter(self.dataset)
         replay_buffer = []
         yield_step = 0
@@ -267,23 +274,22 @@ class ReplayBufferDataset(IterableDataset):
 
         while len(replay_buffer) > 0:
             idx = random.randint(0, len(replay_buffer) - 1)
-            yield_sample = replay_buffer[idx]
-            worker_id = yield_sample[-1]
-            yield yield_sample
+            yield replay_buffer[idx]
             yield_step += 1
-            if not self.shared_buffers[worker_id].empty():
-                replay_buffer[idx] = self.shared_buffers[worker_id].get()
-            elif not dataset_exhausted:
-                try:
-                    sample = next(dataset_iterable)
-                    replay_buffer[idx] = sample
-                except StopIteration:
-                    print('Info: Dataset exhausted. No more samples available.')
-                    dataset_exhausted = True
+            try:
+                replay_buffer[idx] = shared_queue.get_nowait()
+            except:
+                if not dataset_exhausted:
+                    try:
+                        sample = next(dataset_iterable)
+                        replay_buffer[idx] = sample
+                    except StopIteration:
+                        print(f'Info: {worker_id} Dataset exhausted. No more samples available.')
+                        dataset_exhausted = True
+                        replay_buffer.pop(idx)
+                else:
                     replay_buffer.pop(idx)
-            else:
-                replay_buffer.pop(idx)
-            
+                
             if not dataset_exhausted and self.refresh_rate and yield_step % self.refresh_rate == 0:
                 replay_buffer = []
                 dataset_samples = 0
@@ -293,9 +299,10 @@ class ReplayBufferDataset(IterableDataset):
                         sample = next(dataset_iterable)
                         replay_buffer.append(sample)
                     except StopIteration:
-                        print('Info: Dataset exhausted. No more samples available.')
+                        print(f'Info: {worker_id} Dataset exhausted. No more samples available.')
                         dataset_exhausted = True
                         break
-                print(f'Info: Flushed and refreshed replay buffer with {dataset_samples} samples from the dataset.')
+                print(f'Info: {worker_id} Flushed and refreshed replay buffer with {dataset_samples} samples from the dataset.')
 
-
+        print(f'Worker {worker_id} done.')
+        return
