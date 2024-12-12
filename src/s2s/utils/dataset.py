@@ -277,7 +277,13 @@ class ReplayBufferDataset(IterableDataset):
             yield replay_buffer[idx]
             yield_step += 1
             try:
-                replay_buffer[idx] = shared_queue.get_nowait()
+                sample = shared_queue.get_nowait()
+                replay_buffer[idx] = tuple(
+                    x.clone() if isinstance(x, torch.Tensor)
+                    else x.copy() if isinstance(x, np.ndarray)
+                    else x for x in sample
+                )
+                del sample
             except:
                 if not dataset_exhausted:
                     try:
@@ -288,21 +294,21 @@ class ReplayBufferDataset(IterableDataset):
                         dataset_exhausted = True
                         replay_buffer.pop(idx)
                 else:
-                    replay_buffer.pop(idx)
-                
-            if not dataset_exhausted and self.refresh_rate and yield_step % self.refresh_rate == 0:
-                replay_buffer = []
-                dataset_samples = 0
-                while len(replay_buffer) < self.buffer_size:
-                    try:
-                        dataset_samples += 1
-                        sample = next(dataset_iterable)
-                        replay_buffer.append(sample)
-                    except StopIteration:
-                        print(f'Info: {worker_id} Dataset exhausted. No more samples available.')
-                        dataset_exhausted = True
-                        break
-                print(f'Info: {worker_id} Flushed and refreshed replay buffer with {dataset_samples} samples from the dataset.')
-
+                    replay_buffer.pop(idx)           
+            finally:                   
+                if not dataset_exhausted and self.refresh_rate and yield_step % self.refresh_rate == 0:
+                    replay_buffer = []
+                    dataset_samples = 0
+                    while len(replay_buffer) < self.buffer_size:
+                        try:
+                            dataset_samples += 1
+                            sample = next(dataset_iterable)
+                            replay_buffer.append(sample)
+                        except StopIteration:
+                            print(f'Info: {worker_id} Dataset exhausted. No more samples available.')
+                            dataset_exhausted = True
+                            break
+                    print(f'Info: {worker_id} Flushed and refreshed replay buffer with {dataset_samples} samples from the dataset.')
+        
         print(f'Worker {worker_id} done.')
         return
