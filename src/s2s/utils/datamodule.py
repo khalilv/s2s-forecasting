@@ -13,7 +13,7 @@ from s2s.utils.data_utils import collate_fn
 from s2s.utils.dataset import (
     Forecast,
     ZarrReader,
-    ReplayBufferDataset,
+    ShuffleIterableDataset
 )
 
 class GlobalForecastDataModule(LightningDataModule):
@@ -46,8 +46,7 @@ class GlobalForecastDataModule(LightningDataModule):
         climatology_test,
         in_variables,
         static_variables,
-        buffer_size: int = 100,
-        refresh_rate: Optional[int] = None,
+        max_buffer_size: int = 100,
         out_variables = None,
         plot_variables = None,
         predict_size: int = 1,
@@ -87,8 +86,7 @@ class GlobalForecastDataModule(LightningDataModule):
         self.climatology_test = climatology_test
         self.in_variables = in_variables
         self.static_variables = static_variables
-        self.buffer_size = buffer_size
-        self.refresh_rate = refresh_rate
+        self.max_buffer_size = max_buffer_size
         self.predict_size = predict_size
         self.predict_step = predict_step       
         self.history_size = history_size
@@ -116,9 +114,6 @@ class GlobalForecastDataModule(LightningDataModule):
         self.data_val: Optional[IterableDataset] = None
         self.data_test: Optional[IterableDataset] = None
 
-    def add_sample_to_shared_buffer(self, sample):
-        worker_id = sample[-1]
-        self.data_train.shared_queues[worker_id].put(sample)
 
     def get_normalization_stats(self, variables, partition = ""):
         statistics = xr.open_zarr(os.path.join(self.root_dir, partition, "statistics.zarr"), chunks='auto')
@@ -133,7 +128,7 @@ class GlobalForecastDataModule(LightningDataModule):
 
     def setup(self, stage: Optional[str] = None):
         if stage == 'fit':
-            self.data_train = ReplayBufferDataset(
+            self.data_train = ShuffleIterableDataset(
                 Forecast(
                     ZarrReader(
                         file_list=self.lister_train,
@@ -154,9 +149,7 @@ class GlobalForecastDataModule(LightningDataModule):
                     output_transforms=self.output_transforms,
                     mem_load=self.mem_load
                 ),
-                buffer_size=self.buffer_size,
-                num_shared_queues=max(self.num_workers,1),
-                refresh_rate = int(self.refresh_rate*self.batch_size/max(self.num_workers,1)) if self.refresh_rate else None,
+                max_buffer_size=self.max_buffer_size,
             )
             self.data_val = Forecast(
                 ZarrReader(

@@ -21,6 +21,8 @@ from s2s.utils.metrics import (
     variable_weighted_mae
 )
 from s2s.utils.data_utils import plot_spatial_map_with_basemap, split_surface_atmospheric, zero_pad, AURORA_NAME_TO_VAR, SURFACE_VARS, ATMOSPHERIC_VARS, STATIC_VARS
+from s2s.aurora.replay import ReplayBuffer
+
 #3) Global forecast module - abstraction for training/validation/testing steps. setup for the module including hyperparameters is included here
 
 class GlobalForecastModule(LightningModule):
@@ -45,7 +47,8 @@ class GlobalForecastModule(LightningModule):
         update_statistics: bool = False,
         delta_time: int = 6,
         use_activation_checkpointing: bool = False,
-        training_phase: int = 0,
+        training_phase: int = 1,
+        use_automatic_optimization: bool = False,
         drop_path: float = 0.1,
         drop_rate: float = 0.1,
         use_lora: bool = False,
@@ -61,7 +64,8 @@ class GlobalForecastModule(LightningModule):
         mae_beta: float = 1.0,
         mae_gamma: float = 2.0,
         monitor_val_step: int = 1,
-        buffer_lead_time_thresholds: list = [[0,0]],
+        replay_buffer_lead_time_thresholds: list = [[0,0]],
+        max_replay_buffer_size: int = 100,
     ):
         super().__init__()
         self.pretrained_path = pretrained_path
@@ -69,6 +73,7 @@ class GlobalForecastModule(LightningModule):
         self.update_statistics = update_statistics
         self.delta_time = delta_time
         self.use_activation_checkpointing = use_activation_checkpointing
+        self.automatic_optimization = use_automatic_optimization
         self.training_phase = training_phase
         self.drop_path = drop_path
         self.drop_rate = drop_rate
@@ -85,7 +90,8 @@ class GlobalForecastModule(LightningModule):
         self.mae_beta = mae_beta
         self.mae_gamma = mae_gamma
         self.monitor_val_step = monitor_val_step
-        self.buffer_lead_time_thresholds = sorted(buffer_lead_time_thresholds, key=lambda x: x[0])
+        self.replay_buffer_lead_time_thresholds = sorted(replay_buffer_lead_time_thresholds, key=lambda x: x[0])
+        self.max_replay_buffer_size = max_replay_buffer_size
         self.surf_stats = {}
         self.atmos_stats = {}
         self.plot_variables = []
@@ -95,7 +101,10 @@ class GlobalForecastModule(LightningModule):
         self.test_resolution_warning_printed = False
         self.val_resolution_warning_printed = False
         self.train_resolution_warning_printed = False
+        self.replay_buffer = ReplayBuffer()
         assert self.monitor_val_step > 0, 'Validation step to monitor must be > 0'
+        if self.training_phase == 2:
+            assert not self.automatic_optimization, 'Automatic optimization is not supported in training phase 2'
         self.save_hyperparameters(logger=False, ignore=["net"])      
 
     
@@ -290,7 +299,7 @@ class GlobalForecastModule(LightningModule):
         self.out_surface_variables, self.out_atmospheric_variables = split_surface_atmospheric(out_variables)
     
     def training_step(self, batch: Any, batch_idx: int):
-        if self.training_phase == 0:
+        if self.training_phase == 1:
             x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
             
             if not torch.all(lead_times == lead_times[0]):
@@ -302,6 +311,7 @@ class GlobalForecastModule(LightningModule):
             yield_steps = (lead_times[0] // self.delta_time) - 1
             total_loss = 0
             assert rollout_steps == 2 and len(yield_steps) == 2, 'Backpropogating through > 2 autogregressive steps is not supported in phase 1.'
+
             for idx, output_batch in enumerate(rollout(self.net, input_batch, steps=rollout_steps, yield_steps=yield_steps)):
                 preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
                 assert (pred_timestamps == output_timestamps[:,idx]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,idx]}'
@@ -318,72 +328,96 @@ class GlobalForecastModule(LightningModule):
 
             average_loss = total_loss / rollout_steps
             self.log(
-                "train/var_w_mae",
+                "train/phase1_var_w_mae",
                 average_loss,
                 prog_bar=True,
             )
-            return average_loss
-        elif self.training_phase == 1:
-            x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, remaining_predict_steps, worker_ids = batch
-            
-            input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
-            output_batch = self.net.forward(input_batch)
-            rollout_batch = dataclasses.replace(
-                output_batch,
-                surf_vars={
-                    k: torch.cat([input_batch.surf_vars[k][:, 1:], v], dim=1)
-                    for k, v in output_batch.surf_vars.items()
-                },
-                atmos_vars={
-                    k: torch.cat([input_batch.atmos_vars[k][:, 1:], v], dim=1)
-                    for k, v in output_batch.atmos_vars.items()
-                },
-            )
-            preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
-            assert (pred_timestamps == output_timestamps[:,0]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,0]}'
-            target = y[:, 0]
-            if target.shape[-2:] != preds.shape[-2:]:
-                if not self.train_resolution_warnibatchng_printed:
-                    print(f'Warning: Found mismatch in resolutions target: {target.shape}, prediction: {preds.shape}. Subsetting target to match preds.')
-                    self.train_resolution_warning_printed = True
-                target = target[..., :preds.shape[-2], :preds.shape[-1]]
-        
-            loss_dict = self.train_variable_weighted_mae(preds, target)
-            for var in loss_dict.keys():
-                self.log(
-                    "train/var_w_mae",
-                    loss_dict[var],
-                    prog_bar=True,
+
+            if not self.automatic_optimization:
+                opt = self.optimizers()
+                opt.zero_grad()
+                self.manual_backward(average_loss)
+                opt.step()
+                lr_sched = self.lr_schedulers()
+                lr_sched.step()
+            else:
+                return average_loss
+        elif self.training_phase == 2:
+            self.replay_buffer.add_batch(batch)
+
+            while self.max_replay_buffer_size - self.replay_buffer.__len__() < self.trainer.datamodule.batch_size if not self.trainer.is_last_batch else self.replay_buffer.__len__() > 0:
+                batch = self.replay_buffer.sample(self.trainer.datamodule.batch_size)
+                x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, remaining_predict_steps, worker_ids = batch
+                
+                input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
+                output_batch = self.net.forward(input_batch)
+                rollout_batch = dataclasses.replace(
+                        output_batch,
+                        surf_vars={
+                            k: torch.cat([input_batch.surf_vars[k][:, 1:], v], dim=1)
+                            for k, v in output_batch.surf_vars.items()
+                        },
+                        atmos_vars={
+                            k: torch.cat([input_batch.atmos_vars[k][:, 1:], v], dim=1)
+                            for k, v in output_batch.atmos_vars.items()
+                        },
                 )
-            self.train_variable_weighted_mae.reset()
+                preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
+                
+                assert (pred_timestamps == output_timestamps[:,0]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,0]}'
+                target = y[:, 0]
+                if target.shape[-2:] != preds.shape[-2:]:
+                    if not self.train_resolution_warnibatchng_printed:
+                        print(f'Warning: Found mismatch in resolutions target: {target.shape}, prediction: {preds.shape}. Subsetting target to match preds.')
+                        self.train_resolution_warning_printed = True
+                    target = target[..., :preds.shape[-2], :preds.shape[-1]]
+        
+                loss_dict = self.train_variable_weighted_mae(preds, target)
+                for var in loss_dict.keys():
+                    self.log(
+                        "train/phase2_var_w_mae",
+                        loss_dict[var],
+                        prog_bar=True,
+                    )
+                self.train_variable_weighted_mae.reset()
+                
+                if not self.automatic_optimization:
+                    opt = self.optimizers()
+                    opt.zero_grad()
+                    self.manual_backward(loss_dict['var_w_mae'])
+                    opt.step()
+                    lr_sched = self.lr_schedulers()
+                    lr_sched.step()
+                else:
+                    raise NotImplementedError("Automatic optimization is not supported in training phase 2")
            
-            with torch.no_grad():
-                x_next, input_timestamps_next = self.deconstruct_aurora_batch(rollout_batch.to("cpu"), out_variables, preserve_history=True)
-                x_next = x_next[remaining_predict_steps > 1]
-                input_timestamps_next = np.concatenate((input_timestamps[remaining_predict_steps > 1,1:], input_timestamps_next[remaining_predict_steps > 1].reshape(-1, 1)), axis=1)
-                
-                y_next = y[remaining_predict_steps > 1, 1:]
-                lead_times_next = lead_times[remaining_predict_steps > 1, 1:]
-                output_timestamps_next = output_timestamps[remaining_predict_steps > 1, 1:]
-                
-                static = static.to("cpu")
-                y_next = zero_pad(y_next, pad_rows=y.shape[1] - y_next.shape[1], pad_dim=1).to("cpu")
-                lead_times_next = zero_pad(lead_times_next, pad_rows=lead_times.shape[1] - lead_times_next.shape[1], pad_dim=1).to("cpu")
-                output_timestamps_next = zero_pad(output_timestamps_next, pad_rows=output_timestamps.shape[1] - output_timestamps_next.shape[1], pad_dim=1)           
-                
-                remaining_predict_steps_next = remaining_predict_steps[remaining_predict_steps > 1] - 1
-                worker_ids_next = worker_ids[remaining_predict_steps > 1]
-                for i in range(x_next.shape[0]):
-                    for j, (step, lt) in enumerate(self.buffer_lead_time_thresholds):
-                        if self.global_step < step:
-                            if lead_times_next[i][0] <= lt:
-                                self.trainer.datamodule.add_sample_to_shared_buffer((x_next[i], static[i], y_next[i], None, lead_times_next[i], variables, static_variables, out_variables, input_timestamps_next[i], output_timestamps_next[i], remaining_predict_steps_next[i], worker_ids_next[i]))
-                            break
-                        elif j == len(self.buffer_lead_time_thresholds) -1:
-                            self.trainer.datamodule.add_sample_to_shared_buffer((x_next[i], static[i], y_next[i], None, lead_times_next[i], variables, static_variables, out_variables, input_timestamps_next[i], output_timestamps_next[i], remaining_predict_steps_next[i], worker_ids_next[i]))
-            return loss_dict['var_w_mae']
+                with torch.no_grad():
+                    x_next, input_timestamps_next = self.deconstruct_aurora_batch(rollout_batch, out_variables, preserve_history=True)
+                    x_next = x_next[remaining_predict_steps > 1]
+                    input_timestamps_next = np.concatenate((input_timestamps[remaining_predict_steps > 1,1:], input_timestamps_next[remaining_predict_steps > 1].reshape(-1, 1)), axis=1)
+                    
+                    y_next = y[remaining_predict_steps > 1, 1:]
+                    lead_times_next = lead_times[remaining_predict_steps > 1, 1:]
+                    output_timestamps_next = output_timestamps[remaining_predict_steps > 1, 1:]
+                    
+                    static_next = static[0]
+                    y_next = zero_pad(y_next, pad_rows=y.shape[1] - y_next.shape[1], pad_dim=1)
+                    lead_times_next = zero_pad(lead_times_next, pad_rows=lead_times.shape[1] - lead_times_next.shape[1], pad_dim=1)
+                    output_timestamps_next = zero_pad(output_timestamps_next, pad_rows=output_timestamps.shape[1] - output_timestamps_next.shape[1], pad_dim=1)           
+                    
+                    remaining_predict_steps_next = remaining_predict_steps[remaining_predict_steps > 1] - 1
+                    worker_ids_next = worker_ids[remaining_predict_steps > 1]
+                    for i in range(x_next.shape[0]):
+                        sample = (x_next[i], static_next, y_next[i], None, lead_times_next[i], variables, static_variables, out_variables, input_timestamps_next[i], output_timestamps_next[i], remaining_predict_steps_next[i], worker_ids_next[i])
+                        for j, (step, lt) in enumerate(self.replay_buffer_lead_time_thresholds):
+                            if self.global_step < step:
+                                if lead_times_next[i][0] <= lt:
+                                    self.replay_buffer.add_sample(sample)
+                                break
+                            elif j == len(self.replay_buffer_lead_time_thresholds) -1:
+                                self.replay_buffer.add_sample(sample)
         else:
-            raise ValueError("Training phase must be 0 or 1.") 
+            raise ValueError("Training phase must be 1 or 2.") 
     
     def validation_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch

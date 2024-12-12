@@ -75,7 +75,8 @@ model:
   update_statistics: false
   delta_time: 6
   use_activation_checkpointing: true
-  training_phase: 1
+  use_automatic_optimization: false
+  training_phase: 2
   drop_path: 0.1
   drop_rate: 0.1
   use_lora: false
@@ -91,7 +92,8 @@ model:
   mae_beta: 1.0
   mae_gamma: 1.0
   monitor_val_step: 4
-  buffer_lead_time_thresholds: [[1000, 24], [5000, 96], [10000, 168]]
+  replay_buffer_lead_time_thresholds: [[2000, 24], [5000, 96], [10000, 168]]
+  max_replay_buffer_size: 100
 
 
 # ---------------------------- DATA -------------------------------------------
@@ -190,8 +192,7 @@ data:
   history_size: 1
   history_step: 1
   hrs_each_step: 6
-  buffer_size: 100
-  refresh_rate: 50
+  max_buffer_size: 100
   batch_size: 32
   mem_load: 1.0
   num_workers: 2
