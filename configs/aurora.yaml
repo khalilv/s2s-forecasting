@@ -94,6 +94,7 @@ model:
   monitor_val_step: 4
   replay_buffer_lead_time_thresholds: [[2000, 24], [5000, 96], [10000, 168]]
   max_replay_buffer_size: 100
+  send_replay_buffer_to_cpu: false
 
 
 # ---------------------------- DATA -------------------------------------------
@@ -193,7 +194,7 @@ data:
   history_step: 1
   hrs_each_step: 6
   max_buffer_size: 100
-  batch_size: 32
+  batch_size: 16
   mem_load: 1.0
   num_workers: 2
   pin_memory: true

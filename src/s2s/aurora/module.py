@@ -66,6 +66,7 @@ class GlobalForecastModule(LightningModule):
         monitor_val_step: int = 1,
         replay_buffer_lead_time_thresholds: list = [[0,0]],
         max_replay_buffer_size: int = 100,
+        send_replay_buffer_to_cpu: bool = False
     ):
         super().__init__()
         self.pretrained_path = pretrained_path
@@ -92,6 +93,7 @@ class GlobalForecastModule(LightningModule):
         self.monitor_val_step = monitor_val_step
         self.replay_buffer_lead_time_thresholds = sorted(replay_buffer_lead_time_thresholds, key=lambda x: x[0])
         self.max_replay_buffer_size = max_replay_buffer_size
+        self.send_replay_buffer_to_cpu = send_replay_buffer_to_cpu
         self.surf_stats = {}
         self.atmos_stats = {}
         self.plot_variables = []
@@ -101,7 +103,7 @@ class GlobalForecastModule(LightningModule):
         self.test_resolution_warning_printed = False
         self.val_resolution_warning_printed = False
         self.train_resolution_warning_printed = False
-        self.replay_buffer = ReplayBuffer()
+        self.replay_buffer = ReplayBuffer(to_cpu=self.send_replay_buffer_to_cpu)
         assert self.monitor_val_step > 0, 'Validation step to monitor must be > 0'
         if self.training_phase == 2:
             assert not self.automatic_optimization, 'Automatic optimization is not supported in training phase 2'
@@ -343,12 +345,12 @@ class GlobalForecastModule(LightningModule):
             else:
                 return average_loss
         elif self.training_phase == 2:
-            self.replay_buffer.add_batch(batch)
-
+            self.replay_buffer.add(batch)
             while self.max_replay_buffer_size - self.replay_buffer.__len__() < self.trainer.datamodule.batch_size if not self.trainer.is_last_batch else self.replay_buffer.__len__() > 0:
                 batch = self.replay_buffer.sample(self.trainer.datamodule.batch_size)
                 x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, remaining_predict_steps, worker_ids = batch
-                
+                if self.send_replay_buffer_to_cpu:
+                    x, static, y, lead_times = x.to(self.device), static.to(self.device), y.to(self.device), lead_times.to(self.device) 
                 input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
                 output_batch = self.net.forward(input_batch)
                 rollout_batch = dataclasses.replace(
@@ -392,33 +394,48 @@ class GlobalForecastModule(LightningModule):
                     raise NotImplementedError("Automatic optimization is not supported in training phase 2")
            
                 with torch.no_grad():
-                    x_next, input_timestamps_next = self.deconstruct_aurora_batch(rollout_batch, out_variables, preserve_history=True)
-                    x_next = x_next[remaining_predict_steps > 1]
-                    input_timestamps_next = np.concatenate((input_timestamps[remaining_predict_steps > 1,1:], input_timestamps_next[remaining_predict_steps > 1].reshape(-1, 1)), axis=1)
-                    
-                    y_next = y[remaining_predict_steps > 1, 1:]
-                    lead_times_next = lead_times[remaining_predict_steps > 1, 1:]
-                    output_timestamps_next = output_timestamps[remaining_predict_steps > 1, 1:]
-                    
-                    static_next = static[0]
-                    y_next = zero_pad(y_next, pad_rows=y.shape[1] - y_next.shape[1], pad_dim=1)
-                    lead_times_next = zero_pad(lead_times_next, pad_rows=lead_times.shape[1] - lead_times_next.shape[1], pad_dim=1)
-                    output_timestamps_next = zero_pad(output_timestamps_next, pad_rows=output_timestamps.shape[1] - output_timestamps_next.shape[1], pad_dim=1)           
-                    
-                    remaining_predict_steps_next = remaining_predict_steps[remaining_predict_steps > 1] - 1
-                    worker_ids_next = worker_ids[remaining_predict_steps > 1]
-                    for i in range(x_next.shape[0]):
-                        sample = (x_next[i], static_next, y_next[i], None, lead_times_next[i], variables, static_variables, out_variables, input_timestamps_next[i], output_timestamps_next[i], remaining_predict_steps_next[i], worker_ids_next[i])
-                        for j, (step, lt) in enumerate(self.replay_buffer_lead_time_thresholds):
-                            if self.global_step < step:
-                                if lead_times_next[i][0] <= lt:
-                                    self.replay_buffer.add_sample(sample)
-                                break
-                            elif j == len(self.replay_buffer_lead_time_thresholds) -1:
-                                self.replay_buffer.add_sample(sample)
+                    remaining_predict_steps_mask = remaining_predict_steps > 1
+                    if remaining_predict_steps.any():
+                        x_next, input_timestamps_next = self.deconstruct_aurora_batch(rollout_batch, out_variables, preserve_history=True)
+                        x_next = x_next[remaining_predict_steps_mask]
+                        input_timestamps_next = np.concatenate((input_timestamps[remaining_predict_steps_mask,1:], input_timestamps_next[remaining_predict_steps_mask].reshape(-1, 1)), axis=1)
+                        
+                        y_next = y[remaining_predict_steps_mask, 1:]
+                        lead_times_next = lead_times[remaining_predict_steps_mask, 1:]
+                        output_timestamps_next = output_timestamps[remaining_predict_steps_mask, 1:]
+                        
+                        y_next = zero_pad(y_next, pad_rows=y.shape[1] - y_next.shape[1], pad_dim=1)
+                        lead_times_next = zero_pad(lead_times_next, pad_rows=lead_times.shape[1] - lead_times_next.shape[1], pad_dim=1)
+                        output_timestamps_next = zero_pad(output_timestamps_next, pad_rows=output_timestamps.shape[1] - output_timestamps_next.shape[1], pad_dim=1)           
+                        
+                        remaining_predict_steps_next = remaining_predict_steps[remaining_predict_steps_mask] - 1
+                        worker_ids_next = worker_ids[remaining_predict_steps_mask]
+
+                        lead_time_threshold = self.get_lead_time_threshold()
+                        if lead_time_threshold:
+                            lead_time_threshold_mask = lead_times[:, 0] <= lead_time_threshold
+                            lead_time_threshold_mask = lead_time_threshold_mask.to('cpu')
+                            if lead_time_threshold_mask.any():
+                                x_next = x_next[lead_time_threshold_mask]
+                                static_next = static[lead_time_threshold_mask]
+                                y_next = y_next[lead_time_threshold_mask]
+                                lead_times_next = lead_times_next[lead_time_threshold_mask]
+                                input_timestamps_next = input_timestamps_next[lead_time_threshold_mask]
+                                output_timestamps_next = output_timestamps_next[lead_time_threshold_mask]
+                                remaining_predict_steps_next = remaining_predict_steps_next[lead_time_threshold_mask]
+                                worker_ids_next = worker_ids_next[lead_time_threshold_mask]
+                                self.replay_buffer.add((x_next, static_next, y_next, None, lead_times_next, variables, static_variables, out_variables, input_timestamps_next, output_timestamps_next, remaining_predict_steps_next, worker_ids_next))
+                        else:
+                            self.replay_buffer.add((x_next, static_next, y_next, None, lead_times_next, variables, static_variables, out_variables, input_timestamps_next, output_timestamps_next, remaining_predict_steps_next, worker_ids_next))
         else:
             raise ValueError("Training phase must be 1 or 2.") 
     
+    def get_lead_time_threshold(self):
+        for step, threshold in self.replay_buffer_lead_time_thresholds:
+            if self.global_step <= step:
+                return threshold
+        return None
+
     def validation_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
         
