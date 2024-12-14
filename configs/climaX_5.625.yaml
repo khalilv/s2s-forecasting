@@ -153,8 +153,8 @@ data:
   history_size: 0
   history_step: 0
   hrs_each_step: 6
-  buffer_size: 1000
-  batch_size: 1
+  max_buffer_size: 1000
+  batch_size: 32
   mem_load: 1.0
   num_workers: 2
   pin_memory: True

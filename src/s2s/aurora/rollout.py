@@ -1,7 +1,7 @@
 """Copyright (c) Microsoft Corporation. Licensed under the MIT license."""
 
 import dataclasses
-from typing import Generator, Union
+from typing import Generator
 
 import torch
 

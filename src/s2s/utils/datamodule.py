@@ -9,12 +9,11 @@ import numpy as np
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, IterableDataset
 from torchvision.transforms import transforms
-
-from s2s.utils.data_utils import collate_fn, remove_year
+from s2s.utils.data_utils import collate_fn
 from s2s.utils.dataset import (
     Forecast,
     ZarrReader,
-    ShuffleIterableDataset,
+    ShuffleIterableDataset
 )
 
 class GlobalForecastDataModule(LightningDataModule):
@@ -47,7 +46,7 @@ class GlobalForecastDataModule(LightningDataModule):
         climatology_test,
         in_variables,
         static_variables,
-        buffer_size = 10000,
+        max_buffer_size: int = 100,
         out_variables = None,
         plot_variables = None,
         predict_size: int = 1,
@@ -87,7 +86,7 @@ class GlobalForecastDataModule(LightningDataModule):
         self.climatology_test = climatology_test
         self.in_variables = in_variables
         self.static_variables = static_variables
-        self.buffer_size = buffer_size
+        self.max_buffer_size = max_buffer_size
         self.predict_size = predict_size
         self.predict_step = predict_step       
         self.history_size = history_size
@@ -114,7 +113,8 @@ class GlobalForecastDataModule(LightningDataModule):
         self.data_train: Optional[IterableDataset] = None
         self.data_val: Optional[IterableDataset] = None
         self.data_test: Optional[IterableDataset] = None
-        
+
+
     def get_normalization_stats(self, variables, partition = ""):
         statistics = xr.open_zarr(os.path.join(self.root_dir, partition, "statistics.zarr"), chunks='auto')
         normalize_mean = np.array([statistics[f"{var}_mean"] for var in variables])
@@ -127,8 +127,7 @@ class GlobalForecastDataModule(LightningDataModule):
         return lat, lon
 
     def setup(self, stage: Optional[str] = None):
-        # load datasets only if they're not loaded already
-        if not self.data_train and not self.data_val and not self.data_test:
+        if stage == 'fit':
             self.data_train = ShuffleIterableDataset(
                 Forecast(
                     ZarrReader(
@@ -150,9 +149,8 @@ class GlobalForecastDataModule(LightningDataModule):
                     output_transforms=self.output_transforms,
                     mem_load=self.mem_load
                 ),
-                buffer_size=self.buffer_size,
+                max_buffer_size=self.max_buffer_size,
             )
-
             self.data_val = Forecast(
                 ZarrReader(
                     file_list=self.lister_val,
@@ -175,7 +173,7 @@ class GlobalForecastDataModule(LightningDataModule):
                 mem_load=self.mem_load
             )
                 
-
+        if stage == 'test':
             self.data_test = Forecast(
                 ZarrReader(
                     file_list=self.lister_test,

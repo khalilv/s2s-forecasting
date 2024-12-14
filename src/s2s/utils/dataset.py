@@ -7,7 +7,6 @@ import numpy as np
 import torch
 from torch.utils.data import IterableDataset
 
-
 class ZarrReader(IterableDataset):
     """Dataset for loading zarr files.
 
@@ -127,7 +126,7 @@ class ZarrReader(IterableDataset):
                 assert (data_per_worker.latitude.values == climatology_data.latitude.values).all(), f'Mismatch found between climatology latitudes [{climatology_data.latitude.values[0]},...{climatology_data.latitude.values[-1]}] and data latitudes [{data_per_worker.latitude.values[0]},...{data_per_worker.latitude.values[-1]}]. This will cause the wrong climatology values to be used when calculating ACC'
             
             print(f'Info: Year {year}. Rank: {global_rank + 1}/{world_size} gets {rank_start_idx} to {rank_end_idx}. Worker {worker_id + 1}/{num_workers} in rank {global_rank + 1} gets {worker_start_idx} to {worker_end_idx}')
-            yield data_per_worker, static_data, climatology_data, self.in_variables, self.static_variables, self.out_variables, self.predict_range, self.predict_step, self.history_range, self.history_step, self.hrs_each_step
+            yield data_per_worker, static_data, climatology_data, self.in_variables, self.static_variables, self.out_variables, self.predict_range, self.predict_step, self.history_range, self.history_step, self.hrs_each_step, worker_id
 
 
 class Forecast(IterableDataset):
@@ -152,7 +151,7 @@ class Forecast(IterableDataset):
             raise NotImplementedError("Regional forecast is not supported yet.")
         
     def __iter__(self):
-        for data, static_data, climatology_data, in_variables, static_variables, out_variables, predict_range, predict_step, history_range, history_step, hrs_each_step in self.dataset:
+        for data, static_data, climatology_data, in_variables, static_variables, out_variables, predict_range, predict_step, history_range, history_step, hrs_each_step, worker_id in self.dataset:
             static = static_data[static_variables].to_array().transpose('variable','latitude','longitude').load()
             static = torch.tensor(static.values, dtype=torch.float32)
             if self.mem_load == 0:
@@ -204,22 +203,22 @@ class Forecast(IterableDataset):
                         climatology = None
                         
                     if self.normalize_data:
-                        yield self.in_transforms(input), self.static_transforms(static), self.output_transforms(output), climatology, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps
+                        yield self.in_transforms(input), self.static_transforms(static), self.output_transforms(output), climatology, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps, len(lead_times), worker_id
                     else:
-                        yield input, static, output, climatology, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps
+                        yield input, static, output, climatology, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps, len(lead_times), worker_id
 
 class ShuffleIterableDataset(IterableDataset):
-    def __init__(self, dataset, buffer_size: int) -> None:
+    def __init__(self, dataset, max_buffer_size: int) -> None:
         super().__init__()
-        assert buffer_size > 0
+        assert max_buffer_size > 0
         self.dataset = dataset
-        self.buffer_size = buffer_size
+        self.max_buffer_size = max_buffer_size
 
     def __iter__(self):
         buf = []
         for x in self.dataset:
-            if len(buf) == self.buffer_size:
-                idx = random.randint(0, self.buffer_size - 1)
+            if len(buf) == self.max_buffer_size:
+                idx = random.randint(0, self.max_buffer_size - 1)
                 yield buf[idx]
                 buf[idx] = x
             else:
