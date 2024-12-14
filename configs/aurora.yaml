@@ -72,7 +72,7 @@ trainer:
 model:
   pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/aurora-0.25-pretrained.ckpt"
   version: 0
-  update_statistics: false
+  update_statistics: true
   delta_time: 6
   use_activation_checkpointing: true
   use_automatic_optimization: false
@@ -80,7 +80,7 @@ model:
   drop_path: 0.1
   drop_rate: 0.1
   use_lora: false
-  lora_steps: 20
+  lora_steps: 40
   optim_lr: 5e-5
   optim_beta_1: 0.9
   optim_beta_2: 0.999
