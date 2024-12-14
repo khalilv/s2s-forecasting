@@ -380,6 +380,7 @@ class GlobalForecastModule(LightningModule):
                         "train/phase2_var_w_mae",
                         loss_dict[var],
                         prog_bar=True,
+                        on_step=True
                     )
                 self.train_variable_weighted_mae.reset()
                 
@@ -392,7 +393,6 @@ class GlobalForecastModule(LightningModule):
                     lr_sched.step()
                 else:
                     raise NotImplementedError("Automatic optimization is not supported in training phase 2")
-           
                 with torch.no_grad():
                     remaining_predict_steps_mask = remaining_predict_steps > 1
                     if remaining_predict_steps.any():
@@ -413,7 +413,7 @@ class GlobalForecastModule(LightningModule):
 
                         lead_time_threshold = self.get_lead_time_threshold()
                         if lead_time_threshold:
-                            lead_time_threshold_mask = lead_times[:, 0] <= lead_time_threshold
+                            lead_time_threshold_mask = lead_times_next[:, 0] <= lead_time_threshold
                             lead_time_threshold_mask = lead_time_threshold_mask.to('cpu')
                             if lead_time_threshold_mask.any():
                                 x_next = x_next[lead_time_threshold_mask]
@@ -426,7 +426,7 @@ class GlobalForecastModule(LightningModule):
                                 worker_ids_next = worker_ids_next[lead_time_threshold_mask]
                                 self.replay_buffer.add((x_next, static_next, y_next, None, lead_times_next, variables, static_variables, out_variables, input_timestamps_next, output_timestamps_next, remaining_predict_steps_next, worker_ids_next))
                         else:
-                            self.replay_buffer.add((x_next, static_next, y_next, None, lead_times_next, variables, static_variables, out_variables, input_timestamps_next, output_timestamps_next, remaining_predict_steps_next, worker_ids_next))
+                            self.replay_buffer.add((x_next, static, y_next, None, lead_times_next, variables, static_variables, out_variables, input_timestamps_next, output_timestamps_next, remaining_predict_steps_next, worker_ids_next))
         else:
             raise ValueError("Training phase must be 1 or 2.") 
     

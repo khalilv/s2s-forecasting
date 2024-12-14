@@ -85,14 +85,14 @@ model:
   optim_beta_1: 0.9
   optim_beta_2: 0.999
   optim_weight_decay: 5e-6
-  optim_warmup_steps: 250
-  optim_max_steps: 15000
+  optim_warmup_steps: 2000
+  optim_max_steps: 110000
   optim_warmup_start_lr: 0.0
   mae_alpha: 0.25
   mae_beta: 1.0
   mae_gamma: 1.0
   monitor_val_step: 4
-  replay_buffer_lead_time_thresholds: [[2000, 24], [5000, 96], [10000, 168]]
+  replay_buffer_lead_time_thresholds: [[4000, 24], [34000, 96], [105000, 168]]
   max_replay_buffer_size: 100
   send_replay_buffer_to_cpu: false
 
