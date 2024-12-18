@@ -53,6 +53,8 @@ class GlobalForecastModule(LightningModule):
         drop_rate: float = 0.1,
         use_lora: bool = False,
         lora_steps: int = 40,
+        lora_mode: str = 'single',
+        autocast: bool = False,
         optim_lr: float = 5e-5,
         optim_beta_1: float = 0.9,
         optim_beta_2: float = 0.999,
@@ -80,6 +82,8 @@ class GlobalForecastModule(LightningModule):
         self.drop_rate = drop_rate
         self.use_lora = use_lora
         self.lora_steps = lora_steps
+        self.lora_mode = lora_mode
+        self.autocast = autocast
         self.optim_lr = optim_lr
         self.optim_beta_1 = optim_beta_1
         self.optim_beta_2 = optim_beta_2
@@ -123,6 +127,14 @@ class GlobalForecastModule(LightningModule):
         self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat)
         self.test_acc_spatial_map = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)))
 
+    def setup(self, stage):
+        if stage == 'fit':
+            if self.use_lora:
+                print('Info: Freezing backbone weights for LORA')
+                self.freeze_backbone_weights()
+                for name, param in self.net.named_parameters():
+                    print(f"{name}: requires_grad = {param.requires_grad}")
+
     def init_network(self):
         surf_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.in_surface_variables])
         static_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.static_variables])
@@ -141,6 +153,8 @@ class GlobalForecastModule(LightningModule):
                 drop_rate=self.drop_rate,
                 use_lora=self.use_lora,
                 lora_steps=self.lora_steps, 
+                lora_mode=self.lora_mode,
+                autocast=self.autocast
             )
         elif self.version == 1:
             self.net = AuroraSmall(
@@ -153,7 +167,9 @@ class GlobalForecastModule(LightningModule):
                 drop_path=self.drop_path,
                 drop_rate=self.drop_rate,
                 use_lora=self.use_lora,
-                lora_steps=self.lora_steps
+                lora_steps=self.lora_steps,
+                lora_mode=self.lora_mode,
+                autocast=self.autocast
             )
         elif self.version == 2:
             self.net = AuroraHighRes(
@@ -165,7 +181,9 @@ class GlobalForecastModule(LightningModule):
                 drop_path=self.drop_path,
                 drop_rate=self.drop_rate,
                 use_lora=self.use_lora,
-                lora_steps=self.lora_steps
+                lora_steps=self.lora_steps,
+                lora_mode=self.lora_mode,
+                autocast=self.autocast
             )
         else:
             raise ValueError(f"Invalid version number: {self.version}. Must be 0: Aurora, 1: AuroraSmall, or 2: AuroraHighRes.")
@@ -177,7 +195,14 @@ class GlobalForecastModule(LightningModule):
             self.net.configure_activation_checkpointing()
     
     def load_pretrained_weights(self, path):
-        self.net.load_checkpoint_local(path)
+        self.net.load_checkpoint_local(path, strict=False)
+    
+    def freeze_backbone_weights(self):
+        for name, param in self.net.named_parameters():
+            if "lora_qkv" in name or 'lora_proj' in name: 
+                param.requires_grad = True  # LoRA parameters stay trainable
+            elif "backbone" in name:
+                param.requires_grad = False  # Freeze non-LoRA parameters in the backbone
 
     def update_normalization_stats(self, variables, mean, std):
         assert len(variables) == len(mean) and len(mean) == len(std)
@@ -568,8 +593,9 @@ class GlobalForecastModule(LightningModule):
 
     #optimizer definition - will be used to optimize the network based
     def configure_optimizers(self):
+        trainable_params = filter(lambda p: p.requires_grad, self.parameters())
         optimizer = torch.optim.AdamW(
-            params=self.parameters(),
+            params=trainable_params,
             lr=self.optim_lr,
             betas=(self.optim_beta_1, self.optim_beta_2),
             weight_decay=self.optim_weight_decay

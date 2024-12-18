@@ -4,7 +4,7 @@ seed_everything: 42
 trainer:
   default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/finetuned/phase2-6h-5.625
 
-  precision: 32
+  precision: bf16-mixed
 
   devices: 4
   num_nodes: 1
@@ -13,7 +13,7 @@ trainer:
     class_path: pytorch_lightning.strategies.DDPStrategy
     init_args:
       timeout: 02:00:00
-      # find_unused_parameters: true
+      find_unused_parameters: true
   
   min_epochs: 1
   max_epochs: 30
@@ -81,6 +81,8 @@ model:
   drop_rate: 0.1
   use_lora: false
   lora_steps: 40
+  lora_mode: single
+  autocast: true
   optim_lr: 5e-5
   optim_beta_1: 0.9
   optim_beta_2: 0.999
