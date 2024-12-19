@@ -1,67 +1,6 @@
 """Copyright (c) Microsoft Corporation. Licensed under the MIT license."""
 
-from functools import partial
-from typing import Dict, Optional, Tuple, Union, List
-
-import torch
-
-__all__ = [
-    "normalise_surf_var",
-    "normalise_atmos_var",
-    "unnormalise_surf_var",
-    "unnormalise_atmos_var",
-]
-
-
-def normalise_surf_var(
-    x: torch.Tensor,
-    name: str,
-    stats: Optional[Dict[str, Tuple[float, float]]] = None,
-    unnormalise: bool = False,
-) -> torch.Tensor:
-    """Normalise a surface-level variable."""
-    if stats and name in stats:
-        location, scale = stats[name]
-    else:
-        location = locations[name]
-        scale = scales[name]
-    if unnormalise:
-        return x.float() * scale + location
-    else:
-        return (x.float() - location) / scale
-
-
-def normalise_atmos_var(
-    x: torch.Tensor,
-    name: str,
-    atmos_levels: Tuple[Union[int, float], ...],
-    stats: Optional[Dict[str, Tuple[float, float]]] = None,
-    unnormalise: bool = False,
-) -> torch.Tensor:
-    """Normalise an atmospheric variable."""
-    level_locations: List[Union[int, float]] = []
-    level_scales: List[Union[int, float]] = []
-    for level in atmos_levels:
-        atm_name = f"{name}_{level}"
-        if stats and atm_name in stats:
-            l, s = stats[atm_name]
-        else:
-            l = locations[atm_name]
-            s = scales[atm_name]
-        level_locations.append(l)
-        level_scales.append(s)
-    location = torch.tensor(level_locations, dtype=torch.float32, device=x.device)
-    scale = torch.tensor(level_scales, dtype=torch.float32, device=x.device)
-
-    if unnormalise:
-        return x.float() * scale[..., None, None] + location[..., None, None]
-    else:
-        return (x.float() - location[..., None, None]) / scale[..., None, None]
-
-
-unnormalise_surf_var = partial(normalise_surf_var, unnormalise=True)
-unnormalise_atmos_var = partial(normalise_atmos_var, unnormalise=True)
-
+from typing import Dict
 
 locations: Dict[str, float] = {
     "z": -1.386496e03,

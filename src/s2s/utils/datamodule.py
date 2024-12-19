@@ -8,8 +8,8 @@ import glob
 import numpy as np
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, IterableDataset
-from torchvision.transforms import transforms
 from s2s.utils.data_utils import collate_fn
+from s2s.utils.transforms import normalize
 from s2s.utils.dataset import (
     Forecast,
     ZarrReader,
@@ -106,20 +106,46 @@ class GlobalForecastDataModule(LightningDataModule):
         in_mean, in_std = self.get_normalization_stats(self.in_variables)
         out_mean, out_std = self.get_normalization_stats(self.out_variables)
         static_mean, static_std = self.get_normalization_stats(self.static_variables, "static")
-        self.in_transforms = transforms.Normalize(in_mean,in_std)
-        self.output_transforms = transforms.Normalize(out_mean, out_std)
-        self.static_transforms = transforms.Normalize(static_mean, static_std)
+        self.in_transforms = normalize(in_mean, in_std)
+        self.output_transforms = normalize(out_mean, out_std)
+        self.static_transforms = normalize(static_mean, static_std)
 
         self.data_train: Optional[IterableDataset] = None
         self.data_val: Optional[IterableDataset] = None
         self.data_test: Optional[IterableDataset] = None
 
+        if not self.normalize_data:
+            print('Warning: Both input and output data will not be normalized. Model will be run on unnormalized data')
 
     def get_normalization_stats(self, variables, partition = ""):
         statistics = xr.open_zarr(os.path.join(self.root_dir, partition, "statistics.zarr"), chunks='auto')
         normalize_mean = np.array([statistics[f"{var}_mean"] for var in variables])
         normalize_std = np.array([statistics[f"{var}_std"] for var in variables])
         return normalize_mean, normalize_std
+    
+    def get_denormalization_fn(self, group: str):
+        if group == 'in':
+            return self.in_transforms.denormalize
+        elif group == 'out':
+            return self.output_transforms.denormalize
+        elif group == 'static':
+            self.static_transforms.denormalize
+        else:
+            raise ValueError(f"Invalid normalization group name: {group}")
+
+    def update_normalization_stats(self, mean, std, group: str):
+        if not self.normalize_data:
+            print(f"Warning: Updating normalization statistics for normalization group: {group} when normalize_data is False. This will likely have no effect.")
+        else:
+            print(f"Info: Updating normalization statistics for normalization group: {group}")
+        if group == 'in':
+            self.in_transforms.update(mean, std)
+        elif group == 'out':
+            self.output_transforms.update(mean, std)
+        elif group == 'static':
+            self.static_transforms.update(mean, std)
+        else:
+            raise ValueError(f"Invalid normalization group name: {group}")
 
     def get_lat_lon(self):
         lat = np.load(os.path.join(self.root_dir, "lat.npy"))

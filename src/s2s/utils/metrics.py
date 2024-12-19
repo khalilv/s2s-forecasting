@@ -161,6 +161,10 @@ class variable_weighted_mae(Metric):
         self.register_buffer("atm_var_weights", torch.tensor(atm_var_weights, dtype=torch.float32))
 
     def update(self, preds: torch.Tensor, targets: torch.Tensor):
+        if self.transforms is not None:
+            preds = self.transforms(preds)
+            targets = self.transforms(targets) 
+
         surf_preds, atm_preds = preds[:,self.surf_var_idxs,:,:], preds[:,self.atm_var_idxs,:,:]
         surf_targets, atm_targets = targets[:,self.surf_var_idxs,:,:], targets[:,self.atm_var_idxs,:,:]
         B, Vs, Va = preds.shape[0], surf_preds.shape[1], atm_preds.shape[1]

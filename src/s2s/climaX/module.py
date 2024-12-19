@@ -144,8 +144,8 @@ class GlobalForecastModule(LightningModule):
         if len(self.pretrained_path) > 0:
             self.load_pretrained_weights(self.pretrained_path)
 
-    def set_denormalization(self, mean, std):
-        self.denormalization = transforms.Normalize(mean, std)
+    def set_denormalization(self, denormalization_fn: Callable):
+        self.denormalization = denormalization_fn
       
     def set_lat_lon(self, lat, lon):
         self.lat = lat
@@ -167,7 +167,7 @@ class GlobalForecastModule(LightningModule):
         print('Set variables to plot spatial maps for during evaluation: ', plot_variables)
 
     def training_step(self, batch: Any, batch_idx: int):
-        x, static, y, _, lead_times, variables, static_variables, out_variables, _, _ = batch #spread batch data 
+        x, static, y, _, lead_times, variables, static_variables, out_variables, _, _, _, _ = batch #spread batch data 
         
         if y.shape[1] > 1:
             raise NotImplementedError('Multiple prediction steps is not supported yet.')
@@ -207,7 +207,7 @@ class GlobalForecastModule(LightningModule):
         return batch_loss['w_mse']
     
     def validation_step(self, batch: Any, batch_idx: int):
-        x, static, y, climatology, lead_times, variables, static_variables, out_variables, _, _ = batch
+        x, static, y, climatology, lead_times, variables, static_variables, out_variables, _, _, _, _ = batch
         
         if y.shape[1] > 1:
             raise NotImplementedError('Multiple prediction steps is not supported yet.')
@@ -261,8 +261,8 @@ class GlobalForecastModule(LightningModule):
         self.val_lat_weighted_acc.reset()
 
     def test_step(self, batch: Any, batch_idx: int):
-        x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps = batch
-
+        x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
+         
         if y.shape[1] > 1:
             raise NotImplementedError('Multiple prediction steps is not supported yet.')
 

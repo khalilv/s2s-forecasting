@@ -54,8 +54,6 @@ class Aurora(torch.nn.Module):
         use_lora: bool = False,
         lora_steps: int = 40,
         lora_mode: LoRAMode = "single",
-        surf_stats: Optional[Dict[str, Tuple[float, float]]] = None,
-        atmos_stats: Optional[Dict[str, Tuple[float, float]]] = None,
         autocast: bool = False,
     ) -> None:
         """Construct an instance of the model.
@@ -105,12 +103,6 @@ class Aurora(torch.nn.Module):
             lora_mode (str, optional): LoRA mode. `"single"` uses the same LoRA for all roll-out
                 steps, and `"all"` uses a different LoRA for every roll-out step. Defaults to
                 `"single"`.
-            surf_stats (Dict[str, Tuple[float, float]], optional): For these surface-level
-                variables, adjust the normalisation to the given tuple consisting of a new location
-                and scale.
-            atmos_stats (Dict[str, Tuple[float, float]], optional): For these atmospheric
-                variables, adjust the normalisation to the given tuple consisting of a new location
-                and scale.
             autocast (bool, optional): Use `torch.autocast` to reduce memory usage. Defaults to
                 `False`.
         """
@@ -118,26 +110,10 @@ class Aurora(torch.nn.Module):
         self.surf_vars = surf_vars
         self.atmos_vars = atmos_vars
         self.patch_size = patch_size
-        self.surf_stats = surf_stats or dict()
-        self.atmos_stats = atmos_stats or dict()
         self.timedelta = timedelta(hours=delta_time)
         self.autocast = autocast
         self.max_history_size = max_history_size
 
-        if self.surf_stats:
-            warnings.warn(
-                f"The normalisation statics for the following surface-level variables are manually "
-                f"adjusted: {', '.join(sorted(self.surf_stats.keys()))}. "
-                f"Please ensure that this is right!",
-                stacklevel=2,
-            )
-        if self.atmos_stats:
-            warnings.warn(
-                f"The normalisation statics for the following atmospheric variables are manually "
-                f"adjusted: {', '.join(sorted(self.atmos_stats.keys()))}. "
-                f"Please ensure that this is right!",
-                stacklevel=2,
-            )
 
         self.encoder = Perceiver3DEncoder(
             surf_vars=surf_vars,
@@ -197,7 +173,6 @@ class Aurora(torch.nn.Module):
         # Get the first parameter. We'll derive the data type and device from this parameter.
         p = next(self.parameters())
         batch = batch.type(p.dtype)
-        batch = batch.normalise(surf_stats=self.surf_stats, atmos_stats=self.atmos_stats)
         batch = batch.crop(patch_size=self.patch_size)
         batch = batch.to(p.device)
 
@@ -245,8 +220,6 @@ class Aurora(torch.nn.Module):
             surf_vars={k: v[:, None] for k, v in pred.surf_vars.items()},
             atmos_vars={k: v[:, None] for k, v in pred.atmos_vars.items()},
         )
-
-        pred = pred.unnormalise(surf_stats=self.surf_stats, atmos_stats=self.atmos_stats)
 
         return pred
 

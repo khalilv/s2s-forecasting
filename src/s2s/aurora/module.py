@@ -5,12 +5,13 @@
 import torch
 import numpy as np
 import dataclasses
-from typing import Any
+from typing import Any, Callable
 from datetime import datetime, timezone
 from pytorch_lightning import LightningModule
 from tqdm import tqdm
 from s2s.aurora.model.aurora import Aurora, AuroraSmall, AuroraHighRes
 from s2s.aurora.batch import Batch, Metadata
+from s2s.aurora.normalisation import locations, scales
 from s2s.aurora.rollout import rollout
 from s2s.utils.lr_scheduler import LinearWarmupCosineAnnealingLR, LinearWarmupConstantLR
 from s2s.utils.metrics import (
@@ -44,7 +45,8 @@ class GlobalForecastModule(LightningModule):
         self,
         pretrained_path: str = "",
         version: int = 0,
-        update_statistics: bool = False,
+        load_strict: bool = False,
+        use_default_statistics: bool = False,
         delta_time: int = 6,
         use_activation_checkpointing: bool = False,
         training_phase: int = 1,
@@ -73,7 +75,8 @@ class GlobalForecastModule(LightningModule):
         super().__init__()
         self.pretrained_path = pretrained_path
         self.version = version
-        self.update_statistics = update_statistics
+        self.load_strict = load_strict
+        self.use_default_statistics = use_default_statistics
         self.delta_time = delta_time
         self.use_activation_checkpointing = use_activation_checkpointing
         self.automatic_optimization = use_automatic_optimization
@@ -98,12 +101,11 @@ class GlobalForecastModule(LightningModule):
         self.replay_buffer_lead_time_thresholds = sorted(replay_buffer_lead_time_thresholds, key=lambda x: x[0])
         self.max_replay_buffer_size = max_replay_buffer_size
         self.send_replay_buffer_to_cpu = send_replay_buffer_to_cpu
-        self.surf_stats = {}
-        self.atmos_stats = {}
         self.plot_variables = []
         self.flip_lat = False
         self.lat = None
         self.lon = None
+        self.denormalization = None
         self.test_resolution_warning_printed = False
         self.val_resolution_warning_printed = False
         self.train_resolution_warning_printed = False
@@ -119,35 +121,26 @@ class GlobalForecastModule(LightningModule):
         assert self.lon is not None, 'Longitude values not initialized yet.'
         self.train_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
         self.val_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
-        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, suffix=f'{int(self.monitor_val_step*self.delta_time)}hrs')
-        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, suffix=f'{int(self.monitor_val_step*self.delta_time)}hrs')
-        self.test_rmse_spatial_map = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)))
+        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, self.denormalization, suffix=f'{int(self.monitor_val_step*self.delta_time)}hrs')
+        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.denormalization, suffix=f'{int(self.monitor_val_step*self.delta_time)}hrs')
+        self.test_rmse_spatial_map = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), self.denormalization)
         self.test_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
-        self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat)
-        self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat)
-        self.test_acc_spatial_map = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)))
+        self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, self.denormalization)
+        self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.denormalization)
+        self.test_acc_spatial_map = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), self.denormalization)
 
-    def setup(self, stage):
-        if stage == 'fit':
-            if self.use_lora:
-                print('Info: Freezing backbone weights for LORA')
-                self.freeze_backbone_weights()
-                for name, param in self.net.named_parameters():
-                    print(f"{name}: requires_grad = {param.requires_grad}")
+    def set_denormalization(self, denormalization_fn: Callable):
+        self.denormalization = denormalization_fn
 
     def init_network(self):
         surf_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.in_surface_variables])
         static_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.static_variables])
         atmos_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.in_atmospheric_variables])
-        surf_stats = self.surf_stats if self.update_statistics else None
-        atmos_stats = self.atmos_stats if self.update_statistics else None
         if self.version == 0:
             self.net = Aurora(
                 surf_vars=surf_vars,
                 static_vars=static_vars,
                 atmos_vars=atmos_vars,
-                surf_stats=surf_stats,
-                atmos_stats=atmos_stats,
                 delta_time=self.delta_time,
                 drop_path=self.drop_path,
                 drop_rate=self.drop_rate,
@@ -161,8 +154,6 @@ class GlobalForecastModule(LightningModule):
                 surf_vars=surf_vars,
                 static_vars=static_vars,
                 atmos_vars=atmos_vars,
-                surf_stats=surf_stats,
-                atmos_stats=atmos_stats,
                 delta_time=self.delta_time,
                 drop_path=self.drop_path,
                 drop_rate=self.drop_rate,
@@ -175,8 +166,6 @@ class GlobalForecastModule(LightningModule):
             self.net = AuroraHighRes(
                 surf_vars=surf_vars,
                 static_vars=static_vars,
-                surf_stats=surf_stats,
-                atmos_stats=atmos_stats,
                 delta_time=self.delta_time,
                 drop_path=self.drop_path,
                 drop_rate=self.drop_rate,
@@ -193,9 +182,13 @@ class GlobalForecastModule(LightningModule):
         
         if self.use_activation_checkpointing:
             self.net.configure_activation_checkpointing()
+        
+        if self.use_lora:
+            print('Info: Freezing backbone weights for LORA')
+            self.freeze_backbone_weights()
     
     def load_pretrained_weights(self, path):
-        self.net.load_checkpoint_local(path, strict=False)
+        self.net.load_checkpoint_local(path, strict=self.load_strict)
     
     def freeze_backbone_weights(self):
         for name, param in self.net.named_parameters():
@@ -204,22 +197,26 @@ class GlobalForecastModule(LightningModule):
             elif "backbone" in name:
                 param.requires_grad = False  # Freeze non-LoRA parameters in the backbone
 
-    def update_normalization_stats(self, variables, mean, std):
-        assert len(variables) == len(mean) and len(mean) == len(std)
-        for i,v in enumerate(variables):
+    def get_default_aurora_normalization_stats(self, variables):
+        mean, std = [], []
+        for v in variables:
             if v in SURFACE_VARS:
-                self.surf_stats[AURORA_NAME_TO_VAR[v]] = (mean[i], std[i])
+                mean.append(locations[AURORA_NAME_TO_VAR[v]])
+                std.append(scales[AURORA_NAME_TO_VAR[v]])
             elif v in STATIC_VARS:
-                self.surf_stats[AURORA_NAME_TO_VAR[v]] = (mean[i], std[i])
+                mean.append(locations[AURORA_NAME_TO_VAR[v]])
+                std.append(scales[AURORA_NAME_TO_VAR[v]])
             else:
                 atm_var = '_'.join(v.split('_')[:-1])
                 pressure_level = v.split('_')[-1]
                 assert pressure_level.isdigit(), f"Found invalid pressure level in {v}"
                 if atm_var in ATMOSPHERIC_VARS:
-                    self.atmos_stats[f"{AURORA_NAME_TO_VAR[atm_var]}_{pressure_level}"] = (mean[i], std[i])
+                    mean.append(locations[f"{AURORA_NAME_TO_VAR[atm_var]}_{pressure_level}"])
+                    std.append(scales[f"{AURORA_NAME_TO_VAR[atm_var]}_{pressure_level}"])
                 else:
                     raise ValueError(f"{v} could not be identified as a surface, static, or atmospheric variable")                
-    
+        return mean, std 
+        
     def construct_aurora_batch(self, x, static, variables, static_variables, input_timestamps):
         surf_vars = {}
         atmos_vars = {}
@@ -512,9 +509,7 @@ class GlobalForecastModule(LightningModule):
 
     def test_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
-        
-        print(input_timestamps, output_timestamps)
-        
+                
         if not torch.all(lead_times == lead_times[0]):
             raise NotImplementedError("Variable lead times not implemented yet.")
         

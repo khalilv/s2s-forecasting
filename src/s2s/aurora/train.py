@@ -18,13 +18,19 @@ def main():
         parser_kwargs={"parser_mode": "omegaconf", "error_handler": None},
     )
     os.makedirs(cli.trainer.default_root_dir, exist_ok=True)
-    assert cli.datamodule.normalize_data is False, "normalize_data must be false for Aurora. The model handles normalization internally."
     assert cli.datamodule.in_variables == cli.datamodule.out_variables, "Input and output variables must be the same for Aurora"
-    cli.model.update_normalization_stats(cli.datamodule.in_variables, *cli.datamodule.get_normalization_stats(cli.datamodule.in_variables))
-    cli.model.update_normalization_stats(cli.datamodule.static_variables, *cli.datamodule.get_normalization_stats(cli.datamodule.static_variables, "static"))
     cli.model.set_lat_lon(*cli.datamodule.get_lat_lon())
     cli.model.set_variables(cli.datamodule.in_variables, cli.datamodule.static_variables, cli.datamodule.out_variables)
     cli.model.set_plot_variables(cli.datamodule.plot_variables)
+    if cli.datamodule.normalize_data:
+        cli.model.set_denormalization(cli.datamodule.get_denormalization_fn('out'))
+    if cli.model.use_default_statistics:    
+        in_mean, in_std = cli.model.get_default_aurora_normalization_stats(cli.datamodule.in_variables)
+        out_mean, out_std = cli.model.get_default_aurora_normalization_stats(cli.datamodule.out_variables)
+        static_mean, static_std = cli.model.get_default_aurora_normalization_stats(cli.datamodule.static_variables)
+        cli.datamodule.update_normalization_stats(in_mean, in_std, 'in')
+        cli.datamodule.update_normalization_stats(out_mean, out_std, 'out')
+        cli.datamodule.update_normalization_stats(static_mean, static_std, 'static')
     cli.model.init_metrics()
     cli.model.init_network()
 

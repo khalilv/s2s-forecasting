@@ -17,7 +17,6 @@ trainer:
 
   sync_batchnorm: True
   enable_checkpointing: True
-  resume_from_checkpoint: null
 
   # debugging
   fast_dev_run: false

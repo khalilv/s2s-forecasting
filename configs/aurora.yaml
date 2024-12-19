@@ -72,7 +72,8 @@ trainer:
 model:
   pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/aurora-0.25-pretrained.ckpt"
   version: 0
-  update_statistics: true
+  load_strict: false
+  use_default_statistics: true
   delta_time: 6
   use_activation_checkpointing: true
   use_automatic_optimization: false
@@ -190,7 +191,7 @@ data:
   ]
   # [history_step * hrs_each_step * h = history timestamp (hrs)] for h in history_size 
   # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
-  predict_size: 40
+  predict_size: 4
   predict_step: 1
   history_size: 1
   history_step: 1
@@ -200,4 +201,4 @@ data:
   mem_load: 1.0
   num_workers: 2
   pin_memory: true
-  normalize_data: false
+  normalize_data: true
