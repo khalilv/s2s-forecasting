@@ -2,7 +2,7 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/finetuned/phase2-6h-5.625
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/finetuned/phase1-6h-5.625
 
   precision: bf16-mixed
 
@@ -70,16 +70,16 @@ trainer:
 
 # ---------------------------- MODEL -------------------------------------------
 model:
-  pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/aurora-0.25-pretrained.ckpt"
+  pretrained_path: /glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/aurora-0.25-pretrained.ckpt
   version: 0
   load_strict: false
   use_default_statistics: true
   delta_time: 6
   use_activation_checkpointing: true
   use_automatic_optimization: false
-  training_phase: 2
-  drop_path: 0.1
-  drop_rate: 0.1
+  training_phase: 1
+  drop_path: 0.0
+  drop_rate: 0.0
   use_lora: false
   lora_steps: 40
   lora_mode: single
@@ -88,13 +88,13 @@ model:
   optim_beta_1: 0.9
   optim_beta_2: 0.999
   optim_weight_decay: 5e-6
-  optim_warmup_steps: 2000
+  optim_warmup_steps: 1000
   optim_max_steps: 110000
   optim_warmup_start_lr: 0.0
   mae_alpha: 0.25
   mae_beta: 1.0
   mae_gamma: 1.0
-  monitor_val_step: 4
+  monitor_val_step: 2
   replay_buffer_lead_time_thresholds: [[4000, 24], [34000, 96], [105000, 168]]
   max_replay_buffer_size: 100
   send_replay_buffer_to_cpu: false
@@ -191,7 +191,7 @@ data:
   ]
   # [history_step * hrs_each_step * h = history timestamp (hrs)] for h in history_size 
   # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
-  predict_size: 4
+  predict_size: 2
   predict_step: 1
   history_size: 1
   history_step: 1
