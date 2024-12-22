@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import os
+import copy
 import xarray as xr
 from typing import Optional
 import glob 
@@ -9,7 +10,7 @@ import numpy as np
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, IterableDataset
 from s2s.utils.data_utils import collate_fn
-from s2s.utils.transforms import normalize
+from s2s.utils.transforms import NormalizeDenormalize
 from s2s.utils.dataset import (
     Forecast,
     ZarrReader,
@@ -106,9 +107,9 @@ class GlobalForecastDataModule(LightningDataModule):
         in_mean, in_std = self.get_normalization_stats(self.in_variables)
         out_mean, out_std = self.get_normalization_stats(self.out_variables)
         static_mean, static_std = self.get_normalization_stats(self.static_variables, "static")
-        self.in_transforms = normalize(in_mean, in_std)
-        self.output_transforms = normalize(out_mean, out_std)
-        self.static_transforms = normalize(static_mean, static_std)
+        self.in_transforms = NormalizeDenormalize(in_mean, in_std)
+        self.output_transforms = NormalizeDenormalize(out_mean, out_std)
+        self.static_transforms = NormalizeDenormalize(static_mean, static_std)
 
         self.data_train: Optional[IterableDataset] = None
         self.data_val: Optional[IterableDataset] = None
@@ -123,13 +124,13 @@ class GlobalForecastDataModule(LightningDataModule):
         normalize_std = np.array([statistics[f"{var}_std"] for var in variables])
         return normalize_mean, normalize_std
     
-    def get_denormalization_fn(self, group: str):
+    def get_transforms(self, group: str):
         if group == 'in':
-            return self.in_transforms.denormalize
+            return copy.deepcopy(self.in_transforms)
         elif group == 'out':
-            return self.output_transforms.denormalize
+            return copy.deepcopy(self.output_transforms)
         elif group == 'static':
-            self.static_transforms.denormalize
+            return copy.deepcopy(self.static_transforms)
         else:
             raise ValueError(f"Invalid normalization group name: {group}")
 

@@ -26,7 +26,7 @@ def main():
     cli.model.set_variables(cli.datamodule.in_variables, cli.datamodule.static_variables, cli.datamodule.out_variables)
     cli.model.set_plot_variables(cli.datamodule.plot_variables)
     if cli.datamodule.normalize_data:
-        cli.model.set_denormalization(cli.datamodule.get_denormalization_fn('out'))
+        cli.model.set_denormalization(cli.datamodule.get_transforms('out'))
     cli.model.init_metrics()
     cli.model.init_network()
 

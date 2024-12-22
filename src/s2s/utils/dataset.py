@@ -203,7 +203,7 @@ class Forecast(IterableDataset):
                         climatology = None
                         
                     if self.normalize_data:
-                        yield self.in_transforms(input), self.static_transforms(static), self.output_transforms(output), climatology, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps, len(lead_times), worker_id
+                        yield self.in_transforms.normalize(input), self.static_transforms.normalize(static), self.output_transforms.normalize(output), climatology, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps, len(lead_times), worker_id
                     else:
                         yield input, static, output, climatology, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps, len(lead_times), worker_id
 

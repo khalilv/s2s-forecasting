@@ -4,7 +4,7 @@ seed_everything: 42
 trainer:
   default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/finetuned/phase1-6h-5.625
 
-  precision: bf16-mixed
+  precision: 32
 
   devices: 4
   num_nodes: 1
@@ -84,11 +84,11 @@ model:
   lora_steps: 40
   lora_mode: single
   autocast: true
-  optim_lr: 5e-5
+  optim_lr: 5e-6
   optim_beta_1: 0.9
   optim_beta_2: 0.999
   optim_weight_decay: 5e-6
-  optim_warmup_steps: 1000
+  optim_warmup_steps: 2000
   optim_max_steps: 110000
   optim_warmup_start_lr: 0.0
   mae_alpha: 0.25

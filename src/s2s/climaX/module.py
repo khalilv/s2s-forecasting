@@ -118,15 +118,16 @@ class GlobalForecastModule(LightningModule):
     def init_metrics(self):
         assert self.lat is not None, 'Latitude values not initialized yet.'
         assert self.lon is not None, 'Longitude values not initialized yet.'
+        denormalize = self.denormalization.denormalize if self.denormalization else None
         self.train_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat)
-        self.val_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, self.denormalization)
-        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, self.denormalization)
-        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.denormalization)
-        self.test_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, self.denormalization)        
-        self.test_rmse_spatial_map = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), self.denormalization)
-        self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, self.denormalization)
-        self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.denormalization)
-        self.test_acc_spatial_map = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), self.denormalization)
+        self.val_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, denormalize)
+        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize)
+        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize)
+        self.test_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, denormalize)        
+        self.test_rmse_spatial_map = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
+        self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize)
+        self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize)
+        self.test_acc_spatial_map = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
 
     def init_network(self):
         variables = self.static_variables + ["lattitude"] + self.in_variables #climaX includes 2d latitude as an input field
@@ -144,8 +145,8 @@ class GlobalForecastModule(LightningModule):
         if len(self.pretrained_path) > 0:
             self.load_pretrained_weights(self.pretrained_path)
 
-    def set_denormalization(self, denormalization_fn: Callable):
-        self.denormalization = denormalization_fn
+    def set_denormalization(self, denormalization):
+        self.denormalization = denormalization
       
     def set_lat_lon(self, lat, lon):
         self.lat = lat
@@ -169,6 +170,9 @@ class GlobalForecastModule(LightningModule):
     def training_step(self, batch: Any, batch_idx: int):
         x, static, y, _, lead_times, variables, static_variables, out_variables, _, _, _, _ = batch #spread batch data 
         
+        if batch_idx == 0:
+            self.denormalization.to(device=y.device, dtype=y.dtype)
+
         if y.shape[1] > 1:
             raise NotImplementedError('Multiple prediction steps is not supported yet.')
         
@@ -209,6 +213,9 @@ class GlobalForecastModule(LightningModule):
     def validation_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, _, _, _, _ = batch
         
+        if batch_idx == 0:
+            self.denormalization.to(device=y.device, dtype=y.dtype)
+
         if y.shape[1] > 1:
             raise NotImplementedError('Multiple prediction steps is not supported yet.')
         
@@ -262,7 +269,10 @@ class GlobalForecastModule(LightningModule):
 
     def test_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
-         
+        
+        if batch_idx == 0:
+            self.denormalization.to(device=y.device, dtype=y.dtype)
+
         if y.shape[1] > 1:
             raise NotImplementedError('Multiple prediction steps is not supported yet.')
 

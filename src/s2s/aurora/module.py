@@ -119,18 +119,19 @@ class GlobalForecastModule(LightningModule):
     def init_metrics(self):
         assert self.lat is not None, 'Latitude values not initialized yet.'
         assert self.lon is not None, 'Longitude values not initialized yet.'
+        denormalize = self.denormalization.denormalize if self.denormalization else None
         self.train_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
         self.val_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
-        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, self.denormalization, suffix=f'{int(self.monitor_val_step*self.delta_time)}hrs')
-        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.denormalization, suffix=f'{int(self.monitor_val_step*self.delta_time)}hrs')
-        self.test_rmse_spatial_map = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), self.denormalization)
+        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize, suffix=f'{int(self.monitor_val_step*self.delta_time)}hrs')
+        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize, suffix=f'{int(self.monitor_val_step*self.delta_time)}hrs')
+        self.test_rmse_spatial_map = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
         self.test_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
-        self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, self.denormalization)
-        self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, self.denormalization)
-        self.test_acc_spatial_map = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), self.denormalization)
+        self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize)
+        self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize)
+        self.test_acc_spatial_map = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
 
-    def set_denormalization(self, denormalization_fn: Callable):
-        self.denormalization = denormalization_fn
+    def set_denormalization(self, denormalization):
+        self.denormalization = denormalization
 
     def init_network(self):
         surf_vars=tuple([AURORA_NAME_TO_VAR[v] for v in self.in_surface_variables])
@@ -326,6 +327,9 @@ class GlobalForecastModule(LightningModule):
         if self.training_phase == 1:
             x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
             
+            if batch_idx == 0:
+                self.denormalization.to(device=y.device, dtype=y.dtype)
+
             if not torch.all(lead_times == lead_times[0]):
                 raise NotImplementedError("Variable lead times not implemented yet.") 
             
@@ -371,8 +375,13 @@ class GlobalForecastModule(LightningModule):
             while self.max_replay_buffer_size - self.replay_buffer.__len__() < self.trainer.datamodule.batch_size if not self.trainer.is_last_batch else self.replay_buffer.__len__() > 0:
                 batch = self.replay_buffer.sample(self.trainer.datamodule.batch_size)
                 x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, remaining_predict_steps, worker_ids = batch
+                
+                if batch_idx == 0:
+                    self.denormalization.to(device=y.device, dtype=y.dtype)
+
                 if self.send_replay_buffer_to_cpu:
                     x, static, y, lead_times = x.to(self.device), static.to(self.device), y.to(self.device), lead_times.to(self.device) 
+                
                 input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
                 output_batch = self.net.forward(input_batch)
                 rollout_batch = dataclasses.replace(
@@ -460,7 +469,10 @@ class GlobalForecastModule(LightningModule):
 
     def validation_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
-        
+
+        if batch_idx == 0:
+            self.denormalization.to(device=y.device, dtype=y.dtype)
+
         if not torch.all(lead_times == lead_times[0]):
             raise NotImplementedError("Variable lead times not implemented yet.")
         
@@ -509,7 +521,10 @@ class GlobalForecastModule(LightningModule):
 
     def test_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
-                
+        
+        if batch_idx == 0:
+            self.denormalization.to(device=y.device, dtype=y.dtype)
+
         if not torch.all(lead_times == lead_times[0]):
             raise NotImplementedError("Variable lead times not implemented yet.")
         

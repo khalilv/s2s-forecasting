@@ -152,7 +152,7 @@ data:
   history_size: 0
   history_step: 0
   hrs_each_step: 6
-  max_buffer_size: 1000
+  max_buffer_size: 200
   batch_size: 32
   mem_load: 1.0
   num_workers: 2
