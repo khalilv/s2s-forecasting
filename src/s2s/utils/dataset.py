@@ -153,7 +153,7 @@ class Forecast(IterableDataset):
     def __iter__(self):
         for data, static_data, climatology_data, in_variables, static_variables, out_variables, predict_range, predict_step, history_range, history_step, hrs_each_step, worker_id in self.dataset:
             static = static_data[static_variables].to_array().transpose('variable','latitude','longitude').load()
-            static = torch.tensor(static.values, dtype=torch.float32)
+            static = torch.tensor(static.values)
             if self.mem_load == 0:
                 shard_length = history_range + predict_range + 1
             elif self.mem_load == 1:
@@ -182,15 +182,15 @@ class Forecast(IterableDataset):
                 data_shard = data_shard.load()
                 for t in range(history_range, len(data_shard.time) - predict_range):
                     x = data_shard[in_variables].isel(time=slice(t-history_range,t+1,history_step if history_range > 0 else 1)).to_array().transpose('time', 'variable', 'latitude', 'longitude')               
-                    input = torch.tensor(x.values, dtype=torch.float32)
+                    input = torch.tensor(x.values)
                     input_timestamps = np.array(x['time'].values)
                     if predict_range == 0:
                         y = data_shard[out_variables].isel(time=[t]).to_array().transpose('time', 'variable', 'latitude', 'longitude')               
-                        lead_times = torch.tensor([0], dtype=torch.float32)
+                        lead_times = torch.tensor([0])
                     else:
                         y = data_shard[out_variables].isel(time=slice(t + predict_step, (t + predict_step) + predict_range, predict_step)).to_array().transpose('time', 'variable', 'latitude', 'longitude')
-                        lead_times = torch.tensor([hrs_each_step*step for step in range(predict_step, predict_step + predict_range, predict_step)], dtype=torch.float32)
-                    output = torch.tensor(y.values, dtype=torch.float32)
+                        lead_times = torch.tensor([hrs_each_step*step for step in range(predict_step, predict_step + predict_range, predict_step)])
+                    output = torch.tensor(y.values)
                     output_timestamps = np.array(y['time'].values)
                     if climatology_data is not None:
                         tod = np.array([ts.astype('datetime64[h]').astype(int) % 24 for ts in output_timestamps])
@@ -198,7 +198,7 @@ class Forecast(IterableDataset):
                         tod_da = xr.DataArray(tod, dims=["pairs"])
                         doy_da = xr.DataArray(doy, dims=["pairs"])
                         climatology = climatology_shard[out_variables].sel(hour=tod_da, dayofyear=doy_da).to_array().transpose('pairs', 'variable', 'latitude', 'longitude')
-                        climatology = torch.tensor(climatology.values, dtype=torch.float32)
+                        climatology = torch.tensor(climatology.values)
                     else:
                         climatology = None
                         

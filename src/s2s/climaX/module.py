@@ -182,7 +182,7 @@ class GlobalForecastModule(LightningModule):
 
         #prepend static variables to input variables
         static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
-        inputs = torch.cat((static, x), dim=2).to(torch.float32)
+        inputs = torch.cat((static, x), dim=2).to(x.dtype)
 
         in_variables = static_variables + ["lattitude"] + variables
 
@@ -225,7 +225,7 @@ class GlobalForecastModule(LightningModule):
 
         #prepend static variables to input variables
         static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
-        inputs = torch.cat((static, x), dim=2).to(torch.float32)
+        inputs = torch.cat((static, x), dim=2).to(x.dtype)
 
         in_variables = static_variables + ["lattitude"] + variables
 
@@ -282,7 +282,7 @@ class GlobalForecastModule(LightningModule):
 
         #prepend static variables to input variables
         static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
-        inputs = torch.cat((static, x), dim=2).to(torch.float32)
+        inputs = torch.cat((static, x), dim=2).to(x.dtype)
 
         in_variables = static_variables + ["lattitude"] + variables
 

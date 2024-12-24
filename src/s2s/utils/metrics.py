@@ -157,8 +157,8 @@ class variable_weighted_mae(Metric):
                 else:
                     raise ValueError(f"{v} could not be identified as a surface or atmospheric variable")                
     
-        self.register_buffer("surf_var_weights", torch.tensor(surf_var_weights, dtype=torch.float32))
-        self.register_buffer("atm_var_weights", torch.tensor(atm_var_weights, dtype=torch.float32))
+        self.register_buffer("surf_var_weights", torch.tensor(surf_var_weights))
+        self.register_buffer("atm_var_weights", torch.tensor(atm_var_weights))
 
     def update(self, preds: torch.Tensor, targets: torch.Tensor):
         if self.transforms is not None:

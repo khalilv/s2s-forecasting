@@ -194,7 +194,7 @@ class Aurora(torch.nn.Module):
             batch,
             lead_time=self.timedelta,
         )
-        with torch.autocast(device_type="cuda") if self.autocast else contextlib.nullcontext():
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16) if self.autocast else contextlib.nullcontext():
             x = self.backbone(
                 x,
                 lead_time=self.timedelta,
