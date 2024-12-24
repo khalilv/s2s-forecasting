@@ -13,7 +13,7 @@ trainer:
     class_path: pytorch_lightning.strategies.DDPStrategy
     init_args:
       timeout: 02:00:00
-      find_unused_parameters: true
+      # find_unused_parameters: true
   
   min_epochs: 1
   max_epochs: 30
