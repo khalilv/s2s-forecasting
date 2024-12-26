@@ -250,6 +250,13 @@ class Aurora(torch.nn.Module):
 
         d = torch.load(path, map_location=device, weights_only=True)
 
+        #if loading from lightning checkpoint, isolate the state_dict and remove net from keys to load correctly
+        if 'state_dict' in d.keys():
+            d = {
+                (key[len("net."): ] if key.startswith("net.") else key): value
+                for key, value in d['state_dict'].items()
+            }  
+        
         # You can safely ignore all cumbersome processing below. We modified the model after we
         # trained it. The code below manually adapts the checkpoints, so the checkpoints are
         # compatible with the new model.
