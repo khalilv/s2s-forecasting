@@ -151,6 +151,9 @@ class GlobalForecastModule(LightningModule):
     def set_lat_lon(self, lat, lon):
         self.lat = lat
         self.lon = lon
+
+    def setup(self, stage: str):
+        self.denormalization.to(device=self.device, dtype=self.dtype)
        
     def set_lat2d(self, normalize: bool):
         self.lat2d = torch.from_numpy(np.tile(self.lat, (self.img_size[1], 1)).T).unsqueeze(0) #climaX includes 2d latitude as an input field
@@ -169,9 +172,6 @@ class GlobalForecastModule(LightningModule):
 
     def training_step(self, batch: Any, batch_idx: int):
         x, static, y, _, lead_times, variables, static_variables, out_variables, _, _, _, _ = batch #spread batch data 
-        
-        if batch_idx == 0:
-            self.denormalization.to(device=y.device, dtype=y.dtype)
 
         if y.shape[1] > 1:
             raise NotImplementedError('Multiple prediction steps is not supported yet.')
@@ -213,9 +213,6 @@ class GlobalForecastModule(LightningModule):
     def validation_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, _, _, _, _ = batch
         
-        if batch_idx == 0:
-            self.denormalization.to(device=y.device, dtype=y.dtype)
-
         if y.shape[1] > 1:
             raise NotImplementedError('Multiple prediction steps is not supported yet.')
         
@@ -270,9 +267,6 @@ class GlobalForecastModule(LightningModule):
     def test_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
         
-        if batch_idx == 0:
-            self.denormalization.to(device=y.device, dtype=y.dtype)
-
         if y.shape[1] > 1:
             raise NotImplementedError('Multiple prediction steps is not supported yet.')
 

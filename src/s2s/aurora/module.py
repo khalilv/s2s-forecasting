@@ -191,6 +191,9 @@ class GlobalForecastModule(LightningModule):
     def load_pretrained_weights(self, path):
         self.net.load_checkpoint_local(path, strict=self.load_strict)
     
+    def setup(self, stage: str):
+        self.denormalization.to(device=self.device, dtype=self.dtype)
+
     def freeze_backbone_weights(self):
         for name, param in self.net.named_parameters():
             if "lora_qkv" in name or 'lora_proj' in name: 
@@ -326,9 +329,6 @@ class GlobalForecastModule(LightningModule):
     def training_step(self, batch: Any, batch_idx: int):
         if self.training_phase == 1:
             x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
-            
-            if batch_idx == 0:
-                self.denormalization.to(device=y.device, dtype=y.dtype)
 
             if not torch.all(lead_times == lead_times[0]):
                 raise NotImplementedError("Variable lead times not implemented yet.") 
@@ -376,9 +376,6 @@ class GlobalForecastModule(LightningModule):
                 batch = self.replay_buffer.sample(self.trainer.datamodule.batch_size)
                 x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, remaining_predict_steps, worker_ids = batch
                 
-                if batch_idx == 0:
-                    self.denormalization.to(device=y.device, dtype=y.dtype)
-
                 if self.send_replay_buffer_to_cpu:
                     x, static, y, lead_times = x.to(self.device), static.to(self.device), y.to(self.device), lead_times.to(self.device) 
                 
@@ -470,9 +467,6 @@ class GlobalForecastModule(LightningModule):
     def validation_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
 
-        if batch_idx == 0:
-            self.denormalization.to(device=y.device, dtype=y.dtype)
-
         if not torch.all(lead_times == lead_times[0]):
             raise NotImplementedError("Variable lead times not implemented yet.")
         
@@ -522,9 +516,6 @@ class GlobalForecastModule(LightningModule):
     def test_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
         
-        if batch_idx == 0:
-            self.denormalization.to(device=y.device, dtype=y.dtype)
-
         if not torch.all(lead_times == lead_times[0]):
             raise NotImplementedError("Variable lead times not implemented yet.")
         
