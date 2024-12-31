@@ -338,7 +338,7 @@ class GlobalForecastModule(LightningModule):
             rollout_steps = int(lead_times[0][-1] // self.delta_time)
             yield_steps = (lead_times[0] // self.delta_time) - 1
             total_loss = 0
-            assert rollout_steps == 2 and len(yield_steps) == 2, 'Backpropogating through > 2 autogregressive steps is not supported in phase 1.'
+            assert rollout_steps <= 2 and len(yield_steps) <= 2, 'Backpropogating through > 2 autogregressive steps is not supported in phase 1.'
 
             for idx, output_batch in enumerate(rollout(self.net, input_batch, steps=rollout_steps, yield_steps=yield_steps)):
                 preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
