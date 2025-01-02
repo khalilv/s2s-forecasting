@@ -16,7 +16,7 @@ trainer:
       # find_unused_parameters: true
   
   min_epochs: 1
-  max_epochs: 30
+  max_epochs: 100
   enable_progress_bar: true
 
   sync_batchnorm: true
@@ -94,7 +94,7 @@ model:
   mae_alpha: 0.25
   mae_beta: 1.0
   mae_gamma: 1.0
-  monitor_val_step: 2
+  monitor_val_step: 1
   replay_buffer_lead_time_thresholds: [[4000, 24], [34000, 96], [105000, 168]]
   max_replay_buffer_size: 100
   send_replay_buffer_to_cpu: false
@@ -191,7 +191,7 @@ data:
   ]
   # [history_step * hrs_each_step * h = history timestamp (hrs)] for h in history_size 
   # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
-  predict_size: 2
+  predict_size: 1
   predict_step: 1
   history_size: 1
   history_step: 1
