@@ -48,6 +48,7 @@ class GlobalForecastModule(LightningModule):
         load_strict: bool = False,
         use_default_statistics: bool = False,
         delta_time: int = 6,
+        history_size: int = 2,
         use_activation_checkpointing: bool = False,
         training_phase: int = 1,
         use_automatic_optimization: bool = False,
@@ -68,6 +69,7 @@ class GlobalForecastModule(LightningModule):
         mae_beta: float = 1.0,
         mae_gamma: float = 2.0,
         monitor_val_step: int = 1,
+        monitor_test_steps: list = [1],
         replay_buffer_lead_time_thresholds: list = [[0,0]],
         max_replay_buffer_size: int = 100,
         send_replay_buffer_to_cpu: bool = False
@@ -78,6 +80,7 @@ class GlobalForecastModule(LightningModule):
         self.load_strict = load_strict
         self.use_default_statistics = use_default_statistics
         self.delta_time = delta_time
+        self.history_size = history_size
         self.use_activation_checkpointing = use_activation_checkpointing
         self.automatic_optimization = use_automatic_optimization
         self.training_phase = training_phase
@@ -98,6 +101,7 @@ class GlobalForecastModule(LightningModule):
         self.mae_beta = mae_beta
         self.mae_gamma = mae_gamma
         self.monitor_val_step = monitor_val_step
+        self.monitor_test_steps = monitor_test_steps
         self.replay_buffer_lead_time_thresholds = sorted(replay_buffer_lead_time_thresholds, key=lambda x: x[0])
         self.max_replay_buffer_size = max_replay_buffer_size
         self.send_replay_buffer_to_cpu = send_replay_buffer_to_cpu
@@ -111,6 +115,7 @@ class GlobalForecastModule(LightningModule):
         self.train_resolution_warning_printed = False
         self.replay_buffer = ReplayBuffer(to_cpu=self.send_replay_buffer_to_cpu)
         assert self.monitor_val_step > 0, 'Validation step to monitor must be > 0'
+        assert all(step > 0 for step in self.monitor_test_steps), 'All test steps to monitor must be > 0'
         if self.training_phase == 2:
             assert not self.automatic_optimization, 'Automatic optimization is not supported in training phase 2'
         self.save_hyperparameters(logger=False, ignore=["net"])      
@@ -124,11 +129,13 @@ class GlobalForecastModule(LightningModule):
         self.val_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
         self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize, suffix=f'{int(self.monitor_val_step*self.delta_time)}hrs')
         self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize, suffix=f'{int(self.monitor_val_step*self.delta_time)}hrs')
-        self.test_rmse_spatial_map = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
-        self.test_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
-        self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize)
-        self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize)
-        self.test_acc_spatial_map = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
+        self.test_variable_weighted_mae, self.test_lat_weighted_rmse, self.test_lat_weighted_acc, self.test_acc_spatial_map, self.test_rmse_spatial_map = {}, {}, {}, {}, {}
+        for step in self.monitor_test_steps:
+            self.test_variable_weighted_mae[step] = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma, suffix=f'{int(step*self.delta_time)}hrs' if int(step*self.delta_time) < 24 else f'{int(step*self.delta_time/24)}d') 
+            self.test_lat_weighted_rmse[step] = lat_weighted_rmse(self.out_variables, self.lat, denormalize, suffix=f'{int(step*self.delta_time)}hrs' if int(step*self.delta_time) < 24 else f'{int(step*self.delta_time/24)}d') 
+            self.test_lat_weighted_acc[step] = lat_weighted_acc(self.out_variables, self.lat, denormalize, suffix=f'{int(step*self.delta_time)}hrs' if int(step*self.delta_time) < 24 else f'{int(step*self.delta_time/24)}d') 
+            self.test_acc_spatial_map[step] = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize, suffix=f'{int(step*self.delta_time)}hrs' if int(step*self.delta_time) < 24 else f'{int(step*self.delta_time/24)}d') 
+            self.test_rmse_spatial_map[step] = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize, suffix=f'{int(step*self.delta_time)}hrs' if int(step*self.delta_time) < 24 else f'{int(step*self.delta_time/24)}d') 
 
     def set_denormalization(self, denormalization):
         self.denormalization = denormalization
@@ -148,7 +155,8 @@ class GlobalForecastModule(LightningModule):
                 use_lora=self.use_lora,
                 lora_steps=self.lora_steps, 
                 lora_mode=self.lora_mode,
-                autocast=self.autocast
+                autocast=self.autocast,
+                max_history_size=self.history_size
             )
         elif self.version == 1:
             self.net = AuroraSmall(
@@ -161,7 +169,8 @@ class GlobalForecastModule(LightningModule):
                 use_lora=self.use_lora,
                 lora_steps=self.lora_steps,
                 lora_mode=self.lora_mode,
-                autocast=self.autocast
+                autocast=self.autocast,
+                max_history_size=self.history_size
             )
         elif self.version == 2:
             self.net = AuroraHighRes(
@@ -173,7 +182,8 @@ class GlobalForecastModule(LightningModule):
                 use_lora=self.use_lora,
                 lora_steps=self.lora_steps,
                 lora_mode=self.lora_mode,
-                autocast=self.autocast
+                autocast=self.autocast,                
+                max_history_size=self.history_size
             )
         else:
             raise ValueError(f"Invalid version number: {self.version}. Must be 0: Aurora, 1: AuroraSmall, or 2: AuroraHighRes.")
@@ -193,6 +203,12 @@ class GlobalForecastModule(LightningModule):
     
     def setup(self, stage: str):
         self.denormalization.to(device=self.device, dtype=self.dtype)
+        for step in self.monitor_test_steps:
+            self.test_variable_weighted_mae[step].to(self.device)
+            self.test_lat_weighted_acc[step].to(self.device)
+            self.test_lat_weighted_rmse[step].to(self.device)
+            self.test_rmse_spatial_map[step].to(self.device)
+            self.test_acc_spatial_map[step].to(self.device)
 
     def freeze_backbone_weights(self):
         for name, param in self.net.named_parameters():
@@ -522,74 +538,79 @@ class GlobalForecastModule(LightningModule):
         input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
         
         rollout_steps = int(lead_times[0][-1] // self.delta_time)
-        yield_steps = (lead_times[0] // self.delta_time) - 1
-        rollout_batches = [rollout_batch for rollout_batch in rollout(self.net, input_batch, steps=rollout_steps, yield_steps=yield_steps[-1:])]
-        output_batch = rollout_batches[-1]
-        preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
-        
-        assert (pred_timestamps == output_timestamps[:,-1]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,-1]}'
+        yield_steps = [step - 1 for step in self.monitor_test_steps]
+        assert max(yield_steps) < rollout_steps, f'Invalid test steps {self.monitor_test_steps} to monitor for {rollout_steps} rollout steps'
 
-        target = y[:,-1] 
-        clim = climatology[:,-1] 
+        yield_step_idx = 0
+        for rollout_batch in rollout(self.net, input_batch, steps=rollout_steps, yield_steps=yield_steps):
+            step = yield_steps[yield_step_idx]
+            preds, pred_timestamps = self.deconstruct_aurora_batch(rollout_batch, out_variables)        
+            
+            assert (pred_timestamps == output_timestamps[:,step]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
 
-        if target.shape[-2:] != preds.shape[-2:]:
-            if not self.test_resolution_warning_printed:
-                print(f'Warning: Found mismatch in resolutions target: {target.shape}, prediction: {preds.shape}. Subsetting target to match preds.')
-                self.test_resolution_warning_printed = True
-            target = target[..., :preds.shape[-2], :preds.shape[-1]]
-            clim = clim[..., :preds.shape[-2], :preds.shape[-1]]
+            target = y[:,step] 
+            clim = climatology[:,step] 
 
-        self.test_variable_weighted_mae.update(preds, target)              
-        self.test_lat_weighted_rmse.update(preds, target)
-        self.test_rmse_spatial_map.update(preds, target)
+            if target.shape[-2:] != preds.shape[-2:]:
+                if not self.test_resolution_warning_printed:
+                    print(f'Warning: Found mismatch in resolutions target: {target.shape}, prediction: {preds.shape}. Subsetting target to match preds.')
+                    self.test_resolution_warning_printed = True
+                target = target[..., :preds.shape[-2], :preds.shape[-1]]
+                clim = clim[..., :preds.shape[-2], :preds.shape[-1]]
 
-        self.test_lat_weighted_acc.update(preds, target, clim)
-        self.test_acc_spatial_map.update(preds, target, clim)
+            self.test_variable_weighted_mae[step + 1].update(preds, target)              
+            self.test_lat_weighted_rmse[step + 1].update(preds, target)
+            self.test_rmse_spatial_map[step + 1].update(preds, target)
+
+            self.test_lat_weighted_acc[step + 1].update(preds, target, clim)
+            self.test_acc_spatial_map[step + 1].update(preds, target, clim)
+            yield_step_idx += 1
 
     def on_test_epoch_end(self):
-        var_w_mae = self.test_variable_weighted_mae.compute()
-        w_rmse = self.test_lat_weighted_rmse.compute()
-        w_acc = self.test_lat_weighted_acc.compute()
-        rmse_spatial_maps = self.test_rmse_spatial_map.compute()
-        acc_spatial_maps = self.test_acc_spatial_map.compute()
-
-        #scalar metrics
-        loss_dict = {**var_w_mae, **w_rmse, **w_acc}
-        for var in loss_dict.keys():
-            self.log(
-                "test/" + var,
-                loss_dict[var],
-                prog_bar=False,
-                sync_dist=True
-            )
-
-        if self.global_rank == 0:
-            latitudes, longitudes = self.lat.copy(), self.lon.copy()
-            for plot_var in tqdm(self.plot_variables, desc="Plotting RMSE spatial maps"):
-                for var in rmse_spatial_maps.keys():
-                    if plot_var in var:
-                        map = rmse_spatial_maps[var].float().cpu()
-                        if map.shape[0] != len(latitudes) or map.shape[1] != len(longitudes):
-                            print(f'Warning: Found mismatch in resolutions rmse_spatial_map for {var}: {map.shape}, latitude: {len(latitudes)}, longitude: {len(longitudes)}. Subsetting latitude and/or longitude values to match spatial_map resolution')
-                            plot_spatial_map_with_basemap(data=map, lat=latitudes[:map.shape[0]], lon=longitudes[:map.shape[1]], title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
-                        else:
-                            plot_spatial_map_with_basemap(data=map, lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
-
-            for plot_var in tqdm(self.plot_variables, desc="Plotting ACC spatial maps"):
-                for var in acc_spatial_maps.keys():
-                    if plot_var in var:
-                        map = acc_spatial_maps[var].float().cpu()
-                        if map.shape[0] != len(latitudes) or map.shape[1] != len(longitudes):
-                            print(f'Warning: Found mismatch in resolutions acc_spatial_map for {var}: {map.shape}, latitude: {len(latitudes)}, longitude: {len(longitudes)}. Subsetting latitude and/or longitude values to match spatial_map resolution')
-                            plot_spatial_map_with_basemap(data=map, lat=latitudes[:map.shape[0]], lon=longitudes[:map.shape[1]], title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
-                        else:
-                            plot_spatial_map_with_basemap(data=map, lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+        for step in self.monitor_test_steps:
+            var_w_mae = self.test_variable_weighted_mae[step].compute()
+            w_rmse = self.test_lat_weighted_rmse[step].compute()
+            w_acc = self.test_lat_weighted_acc[step].compute()
+            rmse_spatial_maps = self.test_rmse_spatial_map[step].compute()
+            acc_spatial_maps = self.test_acc_spatial_map[step].compute()
             
-        self.test_variable_weighted_mae.reset()
-        self.test_lat_weighted_rmse.reset()
-        self.test_lat_weighted_acc.reset()
-        self.test_acc_spatial_map.reset()
-        self.test_rmse_spatial_map.reset()
+            #scalar metrics
+            loss_dict = {**var_w_mae, **w_rmse, **w_acc}
+            for var in loss_dict.keys():
+                self.log(
+                    "test/" + var,
+                    loss_dict[var],
+                    prog_bar=False,
+                    sync_dist=True
+                )
+
+            if self.global_rank == 0:
+                latitudes, longitudes = self.lat.copy(), self.lon.copy()
+                for plot_var in tqdm(self.plot_variables, desc="Plotting RMSE spatial maps"):
+                    for var in rmse_spatial_maps.keys():
+                        if plot_var in var:
+                            map = rmse_spatial_maps[var].float().cpu()
+                            if map.shape[0] != len(latitudes) or map.shape[1] != len(longitudes):
+                                print(f'Warning: Found mismatch in resolutions rmse_spatial_map for {var}: {map.shape}, latitude: {len(latitudes)}, longitude: {len(longitudes)}. Subsetting latitude and/or longitude values to match spatial_map resolution')
+                                plot_spatial_map_with_basemap(data=map, lat=latitudes[:map.shape[0]], lon=longitudes[:map.shape[1]], title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+                            else:
+                                plot_spatial_map_with_basemap(data=map, lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+
+                for plot_var in tqdm(self.plot_variables, desc="Plotting ACC spatial maps"):
+                    for var in acc_spatial_maps.keys():
+                        if plot_var in var:
+                            map = acc_spatial_maps[var].float().cpu()
+                            if map.shape[0] != len(latitudes) or map.shape[1] != len(longitudes):
+                                print(f'Warning: Found mismatch in resolutions acc_spatial_map for {var}: {map.shape}, latitude: {len(latitudes)}, longitude: {len(longitudes)}. Subsetting latitude and/or longitude values to match spatial_map resolution')
+                                plot_spatial_map_with_basemap(data=map, lat=latitudes[:map.shape[0]], lon=longitudes[:map.shape[1]], title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+                            else:
+                                plot_spatial_map_with_basemap(data=map, lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
+                
+            self.test_variable_weighted_mae[step].reset()
+            self.test_lat_weighted_rmse[step].reset()
+            self.test_lat_weighted_acc[step].reset()
+            self.test_acc_spatial_map[step].reset()
+            self.test_rmse_spatial_map[step].reset()
         self.test_resolution_warning_printed = False
 
     #optimizer definition - will be used to optimize the network based
