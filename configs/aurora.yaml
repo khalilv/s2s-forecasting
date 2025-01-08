@@ -85,7 +85,7 @@ model:
   lora_steps: 40
   lora_mode: single
   autocast: true
-  optim_lr: 5e-6
+  optim_lr: 5e-5
   optim_beta_1: 0.9
   optim_beta_2: 0.999
   optim_weight_decay: 5e-6

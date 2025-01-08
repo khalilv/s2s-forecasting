@@ -125,17 +125,25 @@ class GlobalForecastModule(LightningModule):
         assert self.lat is not None, 'Latitude values not initialized yet.'
         assert self.lon is not None, 'Longitude values not initialized yet.'
         denormalize = self.denormalization.denormalize if self.denormalization else None
+
+        #train metrics
         self.train_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
+
+        #validation metrics
+        val_suffix = f'{int(self.monitor_val_step*self.delta_time)}hrs' if int(self.monitor_val_step*self.delta_time) < 24 else f'{int(self.monitor_val_step*self.delta_time/24)}d'
         self.val_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
-        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize, suffix=f'{int(self.monitor_val_step*self.delta_time)}hrs')
-        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize, suffix=f'{int(self.monitor_val_step*self.delta_time)}hrs')
+        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize, suffix=val_suffix)
+        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize, suffix=val_suffix)
+        
+        #test metrics
         self.test_variable_weighted_mae, self.test_lat_weighted_rmse, self.test_lat_weighted_acc, self.test_acc_spatial_map, self.test_rmse_spatial_map = {}, {}, {}, {}, {}
         for step in self.monitor_test_steps:
-            self.test_variable_weighted_mae[step] = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma, suffix=f'{int(step*self.delta_time)}hrs' if int(step*self.delta_time) < 24 else f'{int(step*self.delta_time/24)}d') 
-            self.test_lat_weighted_rmse[step] = lat_weighted_rmse(self.out_variables, self.lat, denormalize, suffix=f'{int(step*self.delta_time)}hrs' if int(step*self.delta_time) < 24 else f'{int(step*self.delta_time/24)}d') 
-            self.test_lat_weighted_acc[step] = lat_weighted_acc(self.out_variables, self.lat, denormalize, suffix=f'{int(step*self.delta_time)}hrs' if int(step*self.delta_time) < 24 else f'{int(step*self.delta_time/24)}d') 
-            self.test_acc_spatial_map[step] = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize, suffix=f'{int(step*self.delta_time)}hrs' if int(step*self.delta_time) < 24 else f'{int(step*self.delta_time/24)}d') 
-            self.test_rmse_spatial_map[step] = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize, suffix=f'{int(step*self.delta_time)}hrs' if int(step*self.delta_time) < 24 else f'{int(step*self.delta_time/24)}d') 
+            test_suffix = f'{int(step*self.delta_time)}hrs' if int(step*self.delta_time) < 24 else f'{int(step*self.delta_time/24)}d'
+            self.test_variable_weighted_mae[step] = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma, suffix=test_suffix) 
+            self.test_lat_weighted_rmse[step] = lat_weighted_rmse(self.out_variables, self.lat, denormalize, suffix=test_suffix) 
+            self.test_lat_weighted_acc[step] = lat_weighted_acc(self.out_variables, self.lat, denormalize, suffix=test_suffix) 
+            self.test_acc_spatial_map[step] = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize, suffix=test_suffix) 
+            self.test_rmse_spatial_map[step] = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize, suffix=test_suffix) 
 
     def set_denormalization(self, denormalization):
         self.denormalization = denormalization
