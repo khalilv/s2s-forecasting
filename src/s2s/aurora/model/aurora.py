@@ -356,7 +356,7 @@ class Aurora(torch.nn.Module):
                 )
                 # Copy the existing weights to the new tensor by duplicating the histories provided
                 # into any new history dimensions. The rest remains at zero.
-                new_weight[:, :, : weight.shape[2]] = weight
+                new_weight[:, :, -weight.shape[2] :] = weight
 
                 checkpoint[name] = new_weight
 
