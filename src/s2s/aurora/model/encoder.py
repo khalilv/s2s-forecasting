@@ -15,7 +15,7 @@ from s2s.aurora.model.fourier import (
     pos_expansion,
     scale_expansion,
 )
-from s2s.aurora.model.patchembed import LevelPatchEmbed
+from s2s.aurora.model.patchembed import LevelPatchEmbed, VariablePatchEmbed
 from s2s.aurora.model.perceiver import MLP, PerceiverResampler
 from s2s.aurora.model.posencoding import pos_scale_enc
 from s2s.aurora.model.util import (
@@ -98,17 +98,15 @@ class Perceiver3DEncoder(nn.Module):
 
         # Patch embeddings
         assert max_history_size > 0, "At least one history step is required."
-        self.surf_token_embeds = LevelPatchEmbed(
+        self.surf_token_embeds = VariablePatchEmbed(
             surf_vars,
             patch_size,
             embed_dim,
-            max_history_size,
         )
-        self.atmos_token_embeds = LevelPatchEmbed(
+        self.atmos_token_embeds = VariablePatchEmbed(
             atmos_vars,
             patch_size,
             embed_dim,
-            max_history_size,
         )
 
         # Learnable pressure level aggregation
@@ -197,14 +195,15 @@ class Perceiver3DEncoder(nn.Module):
         assert lat.shape[0] == H and lon.shape[-1] == W
 
         # Patch embed the surface level.
-        x_surf = rearrange(x_surf, "b t v h w -> b v t h w")
-        x_surf = self.surf_token_embeds(x_surf, surf_vars)  # (B, L, D)
+        x_surf = rearrange(x_surf, "b t v h w -> (b t) v h w")
+        x_surf = self.surf_token_embeds(x_surf, surf_vars)  # (B, V, L, D)
+        x_surf = rearrange(x_surf, "(b t) v l d -> b t v l d", b=B, t=T)
         dtype = x_surf.dtype  # When using mixed precision, we need to keep track of the dtype.
 
         # Patch embed the atmospheric levels.
-        x_atmos = rearrange(x_atmos, "b t v c h w -> (b c) v t h w")
+        x_atmos = rearrange(x_atmos, "b t v c h w -> (b t c) v h w")
         x_atmos = self.atmos_token_embeds(x_atmos, atmos_vars)
-        x_atmos = rearrange(x_atmos, "(b c) l d -> b c l d", b=B, c=C)
+        x_atmos = rearrange(x_atmos, "(b t c) v l d -> b t c v l d", b=B, c=C, t=T)
 
         # Add surface level encoding. This helps the model distinguish between surface and
         # atmospheric levels.
