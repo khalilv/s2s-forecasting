@@ -49,4 +49,5 @@ def rollout(model: Aurora, batch: Batch, steps: int, yield_steps: list = []) -> 
                 k: torch.cat([batch.atmos_vars[k][:, 1:], v], dim=1)
                 for k, v in pred.atmos_vars.items()
             },
+            metadata=dataclasses.replace(pred.metadata, time=tuple((b[-1], p[0]) for b, p in zip(batch.metadata.time, pred.metadata.time)))
         )

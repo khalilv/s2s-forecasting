@@ -55,6 +55,7 @@ class Aurora(torch.nn.Module):
         lora_steps: int = 40,
         lora_mode: LoRAMode = "single",
         autocast: bool = False,
+        temporal_attention: bool = True,
     ) -> None:
         """Construct an instance of the model.
 
@@ -129,6 +130,7 @@ class Aurora(torch.nn.Module):
             latent_levels=latent_levels,
             max_history_size=max_history_size,
             perceiver_ln_eps=perceiver_ln_eps,
+            temporal_attention=temporal_attention
         )
 
         self.backbone = Swin3DTransformerBackbone(

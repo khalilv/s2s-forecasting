@@ -29,7 +29,6 @@ NAME_TO_VAR = {
     "specific_humidity": "q",
     "geopotential_at_surface": "z",
     "soil_type": "slt",
-    "mean_sea_level_pressure": "msl",
 }
 
 #Aurora and WB2 use different short_names for some surface variables
@@ -38,6 +37,24 @@ AURORA_NAME_TO_VAR["2m_temperature"] = "2t"
 AURORA_NAME_TO_VAR["10m_u_component_of_wind"] = "10u"
 AURORA_NAME_TO_VAR["10m_v_component_of_wind"] = "10v"
 
+AURORA_VARIABLE_CODES = {
+    '2t': 1,
+    't': 1,
+    'z': 2,
+    '10u': 3,
+    'u': 3,
+    '10v': 4,
+    'v': 4,
+    'msl': 5,
+    'sp': 6,
+    'tisr': 7,
+    'tp': 8,
+    'lsm': 9,
+    'orography': 10,
+    'r': 11,
+    'q': 12,
+    'slt': 13
+}
 
 STATIC_VARS = [
     "land_sea_mask",

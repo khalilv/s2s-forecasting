@@ -291,7 +291,12 @@ class GlobalForecastModule(LightningModule):
         for i, v in enumerate(static_variables):
             if v in STATIC_VARS:
                 static_vars[AURORA_NAME_TO_VAR[v]] = torch.flip(static[0,i,:,:], dims=[-2]) if self.flip_lat else static[0,i,:,:]
- 
+
+        batch_timestamps = tuple(
+            tuple(datetime.fromtimestamp(t.astype(int), tz=timezone.utc) for t in ts)
+            for ts in input_timestamps.astype('datetime64[s]')
+        )
+                                       
         return Batch(
             surf_vars=surf_vars,
             static_vars=static_vars,
@@ -299,14 +304,14 @@ class GlobalForecastModule(LightningModule):
             metadata=Metadata(
                 lat=torch.from_numpy(self.lat).flip(dims=[0]) if self.flip_lat else torch.from_numpy(self.lat),
                 lon=torch.from_numpy(self.lon),
-                time=tuple([datetime.fromtimestamp(ts[-1].astype(int), tz=timezone.utc) for ts in input_timestamps.astype('datetime64[s]')]),
+                time=batch_timestamps,
                 atmos_levels=atmos_levels,
             )
         )
 
     def deconstruct_aurora_batch(self, batch: Batch, variables, preserve_history = False):
         preds = []
-        timestamps = np.array([np.datetime64(dt) for dt in batch.metadata.time], dtype='datetime64[ns]')
+        timestamps = np.array([np.datetime64(dt[-1]) for dt in batch.metadata.time], dtype='datetime64[ns]')
         for v in variables:
             if v in SURFACE_VARS:
                 if preserve_history:
