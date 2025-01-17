@@ -2,7 +2,7 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/finetuned/temporal_attention/phase1-6h-5.625_1step
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/temporal_attention/phase1-6h-5.625_1step
 
   precision: 32
 
