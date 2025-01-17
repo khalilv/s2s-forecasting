@@ -16,9 +16,6 @@ NAME_TO_VAR = {
     "10m_u_component_of_wind": "u10",
     "10m_v_component_of_wind": "v10",
     "mean_sea_level_pressure": "msl",
-    "surface_pressure": "sp",
-    "toa_incident_solar_radiation": "tisr",
-    "total_precipitation": "tp",
     "land_sea_mask": "lsm",
     "orography": "orography",
     "geopotential": "z",
@@ -46,14 +43,10 @@ AURORA_VARIABLE_CODES = {
     '10v': 4,
     'v': 4,
     'msl': 5,
-    'sp': 6,
-    'tisr': 7,
-    'tp': 8,
-    'lsm': 9,
-    'orography': 10,
-    'r': 11,
-    'q': 12,
-    'slt': 13
+    'lsm': 6,
+    'r': 7,
+    'q': 8,
+    'slt': 9
 }
 
 STATIC_VARS = [
@@ -68,9 +61,6 @@ SURFACE_VARS = [
     "10m_u_component_of_wind",
     "10m_v_component_of_wind",
     "mean_sea_level_pressure",
-    "surface_pressure",
-    "toa_incident_solar_radiation",
-    "total_precipitation",
 ]
 
 ATMOSPHERIC_VARS = [
