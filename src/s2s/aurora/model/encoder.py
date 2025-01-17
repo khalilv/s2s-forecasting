@@ -46,6 +46,8 @@ class Perceiver3DEncoder(nn.Module):
         mlp_ratio: float = 4.0,
         max_history_size: int = 2,
         perceiver_ln_eps: float = 1e-5,
+        latent_atmos_vars: int = 1,
+        latent_surf_vars: int = 1,
         temporal_attention: bool = True
     ) -> None:
         """Initialise.
@@ -83,11 +85,9 @@ class Perceiver3DEncoder(nn.Module):
         self.atmos_vars = atmos_vars
         self.surf_vars = surf_vars
 
-        # Latent tokens
         assert latent_levels > 1, "At least two latent levels are required."
         self.latent_levels = latent_levels
-        # One latent level will be used by the surface level.
-        self.atmos_latents = nn.Parameter(torch.randn(latent_levels - 1, embed_dim))
+        self.atmos_latents = nn.Parameter(torch.randn(latent_levels - 1, embed_dim)) # One latent level will be used by the surface level.
 
         # Learnable embedding to encode the surface level.
         self.surf_level_encoding = nn.Parameter(torch.randn(embed_dim))
@@ -115,7 +115,31 @@ class Perceiver3DEncoder(nn.Module):
                 embed_dim,
             )
             self.surf_var_embed = nn.Linear(embed_dim, embed_dim)
-            self.atmos_var_embed = nn.Linear(embed_dim, embed_dim)
+            self.atmos_var_embed = nn.Linear(embed_dim, embed_dim)        
+            assert latent_atmos_vars > 0, "At least one latent atmospheric variable is required."
+            assert latent_surf_vars > 0, "At least one latent surface variable is required."
+            self.atmos_var_latents = nn.Parameter(torch.randn(latent_atmos_vars, embed_dim))
+            self.surf_var_latents = nn.Parameter(torch.randn(latent_surf_vars, embed_dim))
+            self.atmos_var_agg = PerceiverResampler(
+                latent_dim=embed_dim,
+                context_dim=embed_dim,
+                depth=depth,
+                head_dim=head_dim,
+                num_heads=num_heads,
+                drop=drop_rate,
+                mlp_ratio=mlp_ratio,
+                ln_eps=perceiver_ln_eps,
+            )
+            self.surf_var_agg = PerceiverResampler(
+                latent_dim=embed_dim,
+                context_dim=embed_dim,
+                depth=depth,
+                head_dim=head_dim,
+                num_heads=num_heads,
+                drop=drop_rate,
+                mlp_ratio=mlp_ratio,
+                ln_eps=perceiver_ln_eps,
+            )
         else:
             self.surf_token_embeds = LevelPatchEmbed(
                 self.surf_vars,
@@ -153,6 +177,9 @@ class Perceiver3DEncoder(nn.Module):
         #
         torch.nn.init.trunc_normal_(self.atmos_latents, std=0.02)
         torch.nn.init.trunc_normal_(self.surf_level_encoding, std=0.02)
+        if self.temporal_attention:
+            torch.nn.init.trunc_normal_(self.atmos_var_latents, std=0.02)
+            torch.nn.init.trunc_normal_(self.surf_var_latents, std=0.02)
 
     def aggregate_levels(self, x: torch.Tensor) -> torch.Tensor:
         """Aggregate pressure level information.
@@ -179,6 +206,61 @@ class Perceiver3DEncoder(nn.Module):
         x = x.unflatten(dim=0, sizes=(B, L))  # (B, L, C, D)
         x = torch.einsum("blcd->bcld", x)  # (B, C, L, D)
         return x
+    
+    def aggregate_atmos_variables(self, x_atmos: torch.Tensor) -> torch.Tensor:
+        """Aggregate atmospheric variable information across time.
+
+        Args:
+            x (torch.Tensor): Tensor of shape `(B, T*V_a, L, D)` where `V_a` refers to the number
+                of atmospheric variables and `T` refers to the number of timestamps for each 
+                variable.
+
+        Returns:
+            torch.Tensor: Tensor of shape `(B, R_a, L, D)` where `R_a` is the number of
+                aggregated atmospheric variables across time.
+        """
+        B, _, L, _ = x_atmos.shape
+        latents = self.atmos_var_latents.to(dtype=x_atmos.dtype)
+        latents = latents.unsqueeze(1).expand(B, -1, L, -1)  # (T*V_a, D) to (B, T*V_a, L, D)
+
+        x_atmos = torch.einsum("bcld->blcd", x_atmos)
+        x_atmos = x_atmos.flatten(0, 1)  # (B * L, T*V_a, D)
+        latents = torch.einsum("bcld->blcd", latents)
+        latents = latents.flatten(0, 1)  # (B * L, T*V_a, D)
+
+        self.atmos_var_agg.to(dtype=x_atmos.dtype)
+        x_atmos = self.atmos_var_agg(latents, x_atmos)  # (B * L, R_a, D)
+        x_atmos = x_atmos.unflatten(dim=0, sizes=(B, L))  # (B, L, R_a, D)
+        x_atmos = torch.einsum("blcd->bcld", x_atmos)  # (B, R_a, L, D)
+        return x_atmos
+    
+    def aggregate_surf_variables(self, x_surf: torch.Tensor) -> torch.Tensor:
+        """Aggregate surface variable information across time.
+
+        Args:
+            x (torch.Tensor): Tensor of shape `(B, T*V_s, L, D)` where `V_s` refers to the number
+                of surface variables and `T` refers to the number of timestamps for each 
+                variable.
+
+        Returns:
+            torch.Tensor: Tensor of shape `(B, R_s, L, D)` where `R_s` is the number of
+                aggregated surface variables across time.
+        """
+        B, _, L, _ = x_surf.shape
+        latents = self.surf_var_latents.to(dtype=x_surf.dtype)
+        latents = latents.unsqueeze(1).expand(B, -1, L, -1)  # (T*V_s, D) to (B, T*V_s, L, D)
+
+        x_surf = torch.einsum("bcld->blcd", x_surf)
+        x_surf = x_surf.flatten(0, 1)  # (B * L, T*V_s, D)
+        latents = torch.einsum("bcld->blcd", latents)
+        latents = latents.flatten(0, 1)  # (B * L, T*V_s, D)
+
+        self.surf_var_agg.to(dtype=x_surf.dtype)
+        x_surf = self.surf_var_agg(latents, x_surf)  # (B * L, R_s, D)
+        x_surf = x_surf.unflatten(dim=0, sizes=(B, L))  # (B, L, R_s, D)
+        x_surf = torch.einsum("blcd->bcld", x_surf)  # (B, R_s, L, D)
+        return x_surf
+
 
     def forward(self, batch: Batch, lead_time: timedelta) -> torch.Tensor:
         """Peform encoding.
@@ -256,51 +338,69 @@ class Perceiver3DEncoder(nn.Module):
             absolute_time_embed = self.absolute_time_embed(absolute_time_encode)
             x_atmos = x_atmos + absolute_time_embed[:, :, None, None, None, :]
             x_surf = x_surf + absolute_time_embed[:, :, None, None, :]
-        else:
-            # Add surface level encoding. This helps the model distinguish between surface and
-            # atmospheric levels.
-            x_surf = x_surf + self.surf_level_encoding[None, None, :].to(dtype=dtype)
-            # Since the surface level is not aggregated, we add a Perceiver-like MLP only.
-            self.surf_norm.to(dtype=dtype)
-            self.surf_mlp.to(dtype=dtype)
-            x_surf = x_surf + self.surf_norm(self.surf_mlp(x_surf))
 
-            # Add atmospheric pressure encoding of shape (C_A, D) and subsequent embedding.
-            atmos_levels_tensor = torch.tensor(atmos_levels, device=x_atmos.device)
-            atmos_levels_encode = levels_expansion(atmos_levels_tensor, self.embed_dim).to(dtype=dtype)
-            atmos_levels_embed = self.atmos_levels_embed(atmos_levels_encode)[None, :, None, :]
-            x_atmos = x_atmos + atmos_levels_embed  # (B, C_A, L, D)
+            x_atmos = rearrange(x_atmos, "b t c v l d -> (b c) (t v) l d")
+            x_atmos = self.aggregate_atmos_variables(x_atmos)  # (B*C, T*V_a, L, D) to (B*C, R_a, L, D)
+            x_atmos = rearrange(x_atmos, "(b c) r l d -> b c r l d", b=B, c=C)
 
-            # Aggregate over pressure levels.
-            x_atmos = self.aggregate_levels(x_atmos)  # (B, C_A, L, D) to (B, C, L, D)
+            x_surf = rearrange(x_surf, "b t v l d -> b (t v) l d")
+            x_surf = self.aggregate_surf_variables(x_surf)  # (B, T*V_s, L, D) to (B, R_s, L, D)
+            
+            if x_surf.shape[1] == 1:
+                x_surf = x_surf.squeeze(1) # (B, L, D)
+            else:
+                raise NotImplementedError(f'Number of latent surface variables R_s > 1 is not supported yet')
+            
+            if x_atmos.shape[2] == 1:
+                x_atmos = x_atmos.squeeze(2) # (B, C, L, D)
+            else:
+                raise NotImplementedError(f'Number of latent atmospheric variables R_a > 1 is not supported yet')
+            
+        # Add surface level encoding. This helps the model distinguish between surface and
+        # atmospheric levels.
+        x_surf = x_surf + self.surf_level_encoding[None, None, :].to(dtype=dtype)
+        # Since the surface level is not aggregated, we add a Perceiver-like MLP only.
+        self.surf_norm.to(dtype=dtype)
+        self.surf_mlp.to(dtype=dtype)
+        x_surf = x_surf + self.surf_norm(self.surf_mlp(x_surf))
 
-            # Concatenate the surface level with the amospheric levels.
-            x = torch.cat((x_surf.unsqueeze(1), x_atmos), dim=1)
+        # Add atmospheric pressure encoding of shape (C_A, D) and subsequent embedding.
+        atmos_levels_tensor = torch.tensor(atmos_levels, device=x_atmos.device)
+        atmos_levels_encode = levels_expansion(atmos_levels_tensor, self.embed_dim).to(dtype=dtype)
+        atmos_levels_embed = self.atmos_levels_embed(atmos_levels_encode)[None, :, None, :]
+        x_atmos = x_atmos + atmos_levels_embed  # (B, C_A, L, D)
 
-            # Add position and scale embeddings to the 3D tensor.
-            pos_encode, scale_encode = pos_scale_enc(
-                self.embed_dim,
-                lat,
-                lon,
-                self.patch_size,
-                pos_expansion=pos_expansion,
-                scale_expansion=scale_expansion,
-            )
-            # Encodings are (L, D).
-            pos_encode = self.pos_embed(pos_encode[None, None, :].to(dtype=dtype))
-            scale_encode = self.scale_embed(scale_encode[None, None, :].to(dtype=dtype))
-            x = x + pos_encode + scale_encode
+        # Aggregate over pressure levels.
+        x_atmos = self.aggregate_levels(x_atmos)  # (B, C_A, L, D) to (B, C, L, D)
 
-            # Flatten the tokens.
-            x = x.reshape(B, -1, self.embed_dim)  # (B, C + 1, L, D) to (B, L', D)
+        # Concatenate the surface level with the amospheric levels.
+        x = torch.cat((x_surf.unsqueeze(1), x_atmos), dim=1)
 
-            # Add lead time embedding.
-            lead_hours = lead_time.total_seconds() / 3600
-            lead_times = lead_hours * torch.ones(B, dtype=dtype, device=x.device)
-            lead_time_encode = lead_time_expansion(lead_times, self.embed_dim).to(dtype=dtype)
-            lead_time_emb = self.lead_time_embed(lead_time_encode)  # (B, D)
-            x = x + lead_time_emb.unsqueeze(1)  # (B, L', D) + (B, 1, D)
+        # Add position and scale embeddings to the 3D tensor.
+        pos_encode, scale_encode = pos_scale_enc(
+            self.embed_dim,
+            lat,
+            lon,
+            self.patch_size,
+            pos_expansion=pos_expansion,
+            scale_expansion=scale_expansion,
+        )
+        # Encodings are (L, D).
+        pos_encode = self.pos_embed(pos_encode[None, None, :].to(dtype=dtype))
+        scale_encode = self.scale_embed(scale_encode[None, None, :].to(dtype=dtype))
+        x = x + pos_encode + scale_encode
 
+        # Flatten the tokens.
+        x = x.reshape(B, -1, self.embed_dim)  # (B, C + 1, L, D) to (B, L', D)
+
+        # Add lead time embedding.
+        lead_hours = lead_time.total_seconds() / 3600
+        lead_times = lead_hours * torch.ones(B, dtype=dtype, device=x.device)
+        lead_time_encode = lead_time_expansion(lead_times, self.embed_dim).to(dtype=dtype)
+        lead_time_emb = self.lead_time_embed(lead_time_encode)  # (B, D)
+        x = x + lead_time_emb.unsqueeze(1)  # (B, L', D) + (B, 1, D)
+
+        if not self.temporal_attention:
             # Add absolute time embedding.
             absolute_times_list = [t[-1].timestamp() / 3600 for t in batch.metadata.time]  # Times in hours
             absolute_times = torch.tensor(absolute_times_list, dtype=torch.float32, device=x.device)
@@ -308,5 +408,5 @@ class Perceiver3DEncoder(nn.Module):
             absolute_time_embed = self.absolute_time_embed(absolute_time_encode.to(dtype=dtype))
             x = x + absolute_time_embed.unsqueeze(1)  # (B, L, D) + (B, 1, D)
 
-            x = self.pos_drop(x)
-            return x
+        x = self.pos_drop(x)
+        return x

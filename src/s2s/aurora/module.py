@@ -45,6 +45,7 @@ class GlobalForecastModule(LightningModule):
         self,
         pretrained_path: str = "",
         version: int = 0,
+        temporal_attention: bool = False,
         load_strict: bool = False,
         use_default_statistics: bool = False,
         delta_time: int = 6,
@@ -77,6 +78,7 @@ class GlobalForecastModule(LightningModule):
         super().__init__()
         self.pretrained_path = pretrained_path
         self.version = version
+        self.temporal_attention = temporal_attention
         self.load_strict = load_strict
         self.use_default_statistics = use_default_statistics
         self.delta_time = delta_time
@@ -164,7 +166,8 @@ class GlobalForecastModule(LightningModule):
                 lora_steps=self.lora_steps, 
                 lora_mode=self.lora_mode,
                 autocast=self.autocast,
-                max_history_size=self.history_size
+                max_history_size=self.history_size,
+                temporal_attention=self.temporal_attention
             )
         elif self.version == 1:
             self.net = AuroraSmall(
@@ -178,7 +181,8 @@ class GlobalForecastModule(LightningModule):
                 lora_steps=self.lora_steps,
                 lora_mode=self.lora_mode,
                 autocast=self.autocast,
-                max_history_size=self.history_size
+                max_history_size=self.history_size,
+                temporal_attention=self.temporal_attention
             )
         elif self.version == 2:
             self.net = AuroraHighRes(
@@ -191,7 +195,8 @@ class GlobalForecastModule(LightningModule):
                 lora_steps=self.lora_steps,
                 lora_mode=self.lora_mode,
                 autocast=self.autocast,                
-                max_history_size=self.history_size
+                max_history_size=self.history_size,
+                temporal_attention=self.temporal_attention
             )
         else:
             raise ValueError(f"Invalid version number: {self.version}. Must be 0: Aurora, 1: AuroraSmall, or 2: AuroraHighRes.")
