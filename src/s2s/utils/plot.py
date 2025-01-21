@@ -31,17 +31,17 @@ def plot_aggregated_variable(npz_files: list, labels: list, variable: str, x_key
         
         plt.plot(data[x_key], data[variable], label=label, marker='o')
         
-        plt.xlabel(x_label if x_label else x_key)
-        plt.ylabel(y_label if y_label else variable)
-        plt.title(title if title else f'{y_label if y_label else variable} vs {x_label if x_label else x_key}')
-        plt.grid(True)
-        plt.legend()
+    plt.xlabel(x_label if x_label else x_key)
+    plt.ylabel(y_label if y_label else variable)
+    plt.title(title if title else f'{y_label if y_label else variable} vs {x_label if x_label else x_key}')
+    plt.grid(True)
+    plt.legend()
         
-        if output_filename:
-            plt.savefig(output_filename, dpi=300, bbox_inches='tight')
-            plt.close()
-        else:
-            plt.show()
+    if output_filename:
+        plt.savefig(output_filename, dpi=300, bbox_inches='tight')
+        plt.close()
+    else:
+        plt.show()
 
 def plot_spatial_map_with_basemap(data: np.ndarray, lon: np.ndarray, lat: np.ndarray, title: str = None, filename: str = None, zlabel: str = "", cMap: str = 'viridis'):
     """
