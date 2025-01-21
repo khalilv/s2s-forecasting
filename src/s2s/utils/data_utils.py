@@ -4,12 +4,7 @@
 import numpy as np
 import torch 
 import calendar
-from matplotlib import pyplot as plt 
 import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.basemap import Basemap
-import matplotlib.colors as colors
-import matplotlib.patches as patches
 
 NAME_TO_VAR = {
     "2m_temperature": "t2m",
@@ -166,31 +161,6 @@ def leap_year_time_adjustment(time, hrs_per_step):
 def is_leap_year(year):
     return calendar.isleap(year)
 
-def plot_spatial_map(data, title=None, filename=None):
-    """Plot a spatial map of 2D data with latitude and longitude axes.
-    
-    Args:
-        data (np.ndarray): 2D array of values to plot
-        title (str, optional): Title for the plot
-        filename (str, optional): Filename to save the plot as PNG
-    """    
-    plt.figure(figsize=(10, 6))
-    plt.imshow(data, cmap='viridis')
-    plt.colorbar()
-    plt.xlabel('Longitude')
-    plt.ylabel('Latitude')
-    plt.xticks([])
-    plt.yticks([])
-    if title is not None:
-        plt.title(title)
-    plt.tight_layout()
-    
-    if filename is not None:
-        plt.savefig(filename, dpi=300, bbox_inches='tight')
-    plt.close()
-
-    return
-
 def encode_timestamp(timestamp):
     """
     Encodes a timestamp string of the form 'YYYY-MM-DDTHH:MM' into a unique number.
@@ -225,57 +195,6 @@ def remove_year(timestamp):
     For example, '2020-01-01T00:00' -> '01-01T00:00' .
     """
     return timestamp[5:]
-
-
-def plot_spatial_map_with_basemap(data, lon, lat, title=None, filename=None, zlabel="", cMap='viridis'):
-    """
-    Plot a spatial map of 2D data with latitude and longitude axes using Basemap, without normalization and with automatic color intervals.
-    
-    Args:
-        data (np.ndarray): 2D array of values to plot
-        lon (np.ndarray): 1D array of longitude values
-        lat (np.ndarray): 1D array of latitude values
-        title (str, optional): Title for the plot
-        filename (str, optional): Filename to save the plot as PNG
-        zlabel (str, optional): Label for colorbar
-        cMap (str, optional): Colormap to use
-    """
-    fig, ax = plt.subplots(figsize=(16, 6))
-    
-    m = Basemap(projection='cyl', resolution='c', 
-                llcrnrlat=-90, urcrnrlat=90, 
-                llcrnrlon=-180, urcrnrlon=180, ax=ax)
-    m.drawcoastlines()
-
-    lon = np.where(lon >= 180, lon - 360, lon)
-    lon = np.roll(lon, int(len(lon) / 2))
-    data = np.roll(data, int(len(lon) / 2), axis=1)
-    
-    x, y = np.meshgrid(lon, lat)
-    im = m.pcolormesh(x, y, data, cmap=cMap, shading='auto', latlon=True)
-    
-    cbar = m.colorbar(im, location='bottom', pad=0.03, fraction=0.04)
-    cbar.ax.tick_params(labelsize=10)
-    cbar.set_label(zlabel, fontsize=12)
-    
-    top_left_lon, top_left_lat = -126, 50
-    bottom_right_lon, bottom_right_lat = -112, 30
-    width = bottom_right_lon - top_left_lon
-    height = top_left_lat - bottom_right_lat
-    
-    rect = patches.Rectangle((top_left_lon, bottom_right_lat), width, height, linewidth=2, edgecolor='pink', facecolor='none', linestyle='--')
-    ax.add_patch(rect)
-
-    if title:
-        plt.title(title)
-    
-    if filename:
-        plt.savefig(filename, dpi=300, bbox_inches='tight')
-    
-    plt.close()
-
-    return
-
 
 def zero_pad(input, pad_rows=1, pad_dim=1):
     pad_shape = list(input.shape)
