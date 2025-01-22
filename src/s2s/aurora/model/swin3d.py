@@ -481,6 +481,9 @@ class Swin3DTransformerBlock(nn.Module):
         # Partition the patches/tokens into windows.
         x_windows = window_partition_3d(shifted_x, ws)  # (nW*B, ws, ws, D)
         x_windows = x_windows.view(-1, ws[0] * ws[1] * ws[2], D)  # (nW*B, ws*ws, D)
+        
+        #TODO
+        #rollout_steps = torch.tensor([rollout_step]).repeat_interleave((shifted_x.shape[0] * shifted_x.shape[1] * shifted_x.shape[2]) // (ws[0] * ws[1] * ws[2]))
 
         # W-MSA/SW-MSA. Has shape (nW*B, ws*ws, D).
         attn_windows = self.attn(x_windows, mask=attn_mask, rollout_step=rollout_step)
