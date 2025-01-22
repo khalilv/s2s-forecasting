@@ -648,20 +648,20 @@ class GlobalForecastModule(LightningModule):
             weight_decay=self.optim_weight_decay
         )
 
-        # #pretraining
-        # lr_scheduler = LinearWarmupCosineAnnealingLR(
-        #     optimizer,
-        #     warmup_steps=self.optim_warmup_steps,
-        #     max_steps=self.optim_max_steps,
-        #     warmup_start_lr=self.optim_warmup_start_lr,
-        #     eta_min=self.optim_lr / 10,
-        # )
-
-        # #finetuning
-        lr_scheduler = LinearWarmupConstantLR(
-            optimizer, 
-            warmup_steps=self.optim_warmup_steps
+        #learning rate with decay and warmup
+        lr_scheduler = LinearWarmupCosineAnnealingLR(
+            optimizer,
+            warmup_steps=self.optim_warmup_steps,
+            max_steps=self.optim_max_steps,
+            warmup_start_lr=self.optim_warmup_start_lr,
+            eta_min=self.optim_lr / 10,
         )
+
+        #constant learning rate with warmup
+        # lr_scheduler = LinearWarmupConstantLR(
+        #     optimizer, 
+        #     warmup_steps=self.optim_warmup_steps
+        # )
 
         scheduler = {"scheduler": lr_scheduler, "interval": "step", "frequency": 1}
 

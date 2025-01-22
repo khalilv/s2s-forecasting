@@ -2,7 +2,7 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/temporal_attention/phase1-6h-5.625_1step
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/temporal_attention/phase1-6h-5.625_1step_14d_hist
 
   precision: 32
 
@@ -76,7 +76,7 @@ model:
   load_strict: false
   use_default_statistics: true
   delta_time: 6
-  history_size: 2
+  history_size: 56
   use_activation_checkpointing: true
   use_automatic_optimization: false
   training_phase: 1
@@ -91,7 +91,7 @@ model:
   optim_beta_2: 0.999
   optim_weight_decay: 5e-6
   optim_warmup_steps: 2000
-  optim_max_steps: 110000
+  optim_max_steps: 100000
   optim_warmup_start_lr: 0.0
   mae_alpha: 0.25
   mae_beta: 1.0
@@ -196,11 +196,11 @@ data:
   # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
   predict_size: 1
   predict_step: 1
-  history_size: 1
+  history_size: 55
   history_step: 1
   hrs_each_step: 6
   max_buffer_size: 100
-  batch_size: 8
+  batch_size: 1
   mem_load: 1.0
   num_workers: 2
   pin_memory: true
