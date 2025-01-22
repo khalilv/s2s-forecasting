@@ -55,6 +55,7 @@ class Aurora(torch.nn.Module):
         lora_steps: int = 40,
         lora_mode: LoRAMode = "single",
         autocast: bool = False,
+        temporal_attention: bool = True,
     ) -> None:
         """Construct an instance of the model.
 
@@ -113,6 +114,7 @@ class Aurora(torch.nn.Module):
         self.timedelta = timedelta(hours=delta_time)
         self.autocast = autocast
         self.max_history_size = max_history_size
+        self.temporal_attention = temporal_attention
 
 
         self.encoder = Perceiver3DEncoder(
@@ -129,6 +131,7 @@ class Aurora(torch.nn.Module):
             latent_levels=latent_levels,
             max_history_size=max_history_size,
             perceiver_ln_eps=perceiver_ln_eps,
+            temporal_attention=temporal_attention
         )
 
         self.backbone = Swin3DTransformerBackbone(
@@ -321,7 +324,25 @@ class Aurora(torch.nn.Module):
                 f"into model with `max_history_size` {self.max_history_size}."
             )
 
+        if self.temporal_attention:
+            self.adapt_checkpoint_variable_patch_embedding(d)
+
         self.load_state_dict(d, strict=strict)
+    
+    def adapt_checkpoint_variable_patch_embedding(self, checkpoint: Dict[str, torch.Tensor]) -> None:
+        """Adapt a checkpoint weights to use the VariablePatchEmbed mechanism
+
+        This implementation copies the weight from the last timestamp for each variable to the model. 
+        It mutates `checkpoint`.
+        """
+        for name, weight in list(checkpoint.items()):
+            # We only need to adapt the patch embedding in the encoder.
+            enc_surf_embedding = name.startswith("encoder.surf_token_embeds.weights.")
+            enc_atmos_embedding = name.startswith("encoder.atmos_token_embeds.weights.")
+            if enc_surf_embedding or enc_atmos_embedding:
+                # Copy the existing weights to the new tensor by selecting the last timestep for each variable
+                new_weight = weight[:,:,-1]
+                checkpoint[name] = new_weight
 
     def adapt_checkpoint_max_history_size(self, checkpoint: Dict[str, torch.Tensor]) -> None:
         """Adapt a checkpoint with smaller `max_history_size` to a model with a larger

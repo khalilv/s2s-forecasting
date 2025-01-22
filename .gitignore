@@ -139,3 +139,6 @@ exps
 
 #checkpoints
 *.ckpt
+
+#plots
+plots
