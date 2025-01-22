@@ -332,7 +332,7 @@ class Perceiver3DEncoder(nn.Module):
             x_atmos = x_atmos + atmos_vars_embed
 
             #add absolute time embedding
-            absolute_timestamps = [[dt.timestamp() for dt in batch] for batch in batch.metadata.time]
+            absolute_timestamps = [[dt.timestamp() / 3600  for dt in batch] for batch in batch.metadata.time]
             absolute_time_tensor = torch.tensor(absolute_timestamps, dtype=torch.float32, device=x_surf.device)
             absolute_time_encode = absolute_time_expansion(absolute_time_tensor, self.embed_dim).to(dtype=dtype)
             absolute_time_embed = self.absolute_time_embed(absolute_time_encode)

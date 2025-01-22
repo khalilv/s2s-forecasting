@@ -339,7 +339,7 @@ class GlobalForecastModule(LightningModule):
         if preserve_history:
             preds = torch.stack(preds, dim=2) #(T, H, V, H, W)
         else:
-            preds = torch.stack(preds, dim=1) #(T, H, V, H, W)
+            preds = torch.stack(preds, dim=1) #(T, V, H, W)
         return preds, timestamps
 
     def set_lat_lon(self, lat, lon):
