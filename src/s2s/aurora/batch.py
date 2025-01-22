@@ -19,7 +19,7 @@ class Metadata:
     Args:
         lat (:class:`torch.Tensor`): Latitudes.
         lon (:class:`torch.Tensor`): Longitudes.
-        time (Tuple[datetime, ...]): For every batch element, the time.
+        time (Tuple[Tuple[datetime, ...], ...]): For every batch element, all the timestamps present in the history.
         atmos_levels (Tuple[Union[int, float], ...]): Pressure levels for the atmospheric variables in
             hPa.
         rollout_step (int, optional): How many roll-out steps were used to produce this prediction.
@@ -30,7 +30,7 @@ class Metadata:
 
     lat: torch.Tensor
     lon: torch.Tensor
-    time: Tuple[datetime, ...]
+    time: Tuple[Tuple[datetime, ...], ...]
     atmos_levels: Tuple[Union[int, float], ...]
     rollout_step: int = 0
 

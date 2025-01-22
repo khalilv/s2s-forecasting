@@ -174,7 +174,7 @@ class Perceiver3DDecoder(nn.Module):
             Metadata(
                 lat=lat,
                 lon=lon,
-                time=tuple(t + lead_time for t in batch.metadata.time),
+                time=tuple((t[-1] + lead_time,) for t in batch.metadata.time),
                 atmos_levels=atmos_levels,
                 rollout_step=batch.metadata.rollout_step + 1,
             ),
