@@ -72,6 +72,7 @@ trainer:
 model:
   pretrained_path: /glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/aurora-0.25-pretrained.ckpt
   version: 0
+  reinit_encoder_decoder: true
   temporal_encoder: false
   temporal_decoder: false
   load_strict: false

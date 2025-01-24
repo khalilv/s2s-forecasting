@@ -77,7 +77,7 @@ class Perceiver3DDecoder(nn.Module):
         )
 
         if self.temporal_decoder:
-            self.surf_vars_decoder = PerceiverResampler(
+            self.surf_var_decoder = PerceiverResampler(
                 latent_dim=embed_dim,
                 context_dim=embed_dim,
                 depth=depth,
@@ -88,7 +88,7 @@ class Perceiver3DDecoder(nn.Module):
                 residual_latent=True,
                 ln_eps=perceiver_ln_eps,
             )
-            self.atmos_vars_decoder = PerceiverResampler(
+            self.atmos_var_decoder = PerceiverResampler(
                 latent_dim=embed_dim,
                 context_dim=embed_dim,
                 depth=depth,
@@ -137,47 +137,47 @@ class Perceiver3DDecoder(nn.Module):
         x = x.reshape(B, L, C, D)
         return x
     
-    def deaggregate_atmos_variables(self, atmos_vars_embed: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    def deaggregate_atmos_variables(self, atmos_var_embed: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         """Deaggregate atmospheric variable information.
 
         Args:
-            atmos_vars_embed (torch.Tensor): atmospheric variable embedding of shape `(B, L, V_a, D)`.
+            atmos_var_embed (torch.Tensor): atmospheric variable embedding of shape `(B, L, V_a, D)`.
             x (torch.Tensor): Aggregated input of shape `(B, L, R_a, D)`.
 
         Returns:
             torch.Tensor: Deaggregate output of shape `(B, L, V_a, D)`.
         """
-        B, L, V, D = atmos_vars_embed.shape
-        atmos_vars_embed = atmos_vars_embed.flatten(0, 1)  # (BxL, V_a, D)
+        B, L, V, D = atmos_var_embed.shape
+        atmos_var_embed = atmos_var_embed.flatten(0, 1)  # (BxL, V_a, D)
         x = x.flatten(0, 1)  # (BxL, R_a, D)
-        _msg = f"Batch size mismatch. Found {atmos_vars_embed.size(0)} and {x.size(0)}."
-        assert atmos_vars_embed.size(0) == x.size(0), _msg
-        assert len(atmos_vars_embed.shape) == 3, f"Expected 3 dims, found {atmos_vars_embed.dims()}."
+        _msg = f"Batch size mismatch. Found {atmos_var_embed.size(0)} and {x.size(0)}."
+        assert atmos_var_embed.size(0) == x.size(0), _msg
+        assert len(atmos_var_embed.shape) == 3, f"Expected 3 dims, found {atmos_var_embed.dims()}."
         assert x.dim() == 3, f"Expected 3 dims, found {x.dim()}."
 
-        x = self.atmos_vars_decoder(atmos_vars_embed, x)  # (BxL, V_a, D)
+        x = self.atmos_var_decoder(atmos_var_embed, x)  # (BxL, V_a, D)
         x = x.reshape(B, L, V, D)
         return x
 
-    def deaggregate_surf_variables(self, surf_vars_embed: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    def deaggregate_surf_variables(self, surf_var_embed: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         """Deaggregate surface variable information.
 
         Args:
-            surf_vars_embed (torch.Tensor): surface variable embedding of shape `(B, L, V_s, D)`.
+            surf_var_embed (torch.Tensor): surface variable embedding of shape `(B, L, V_s, D)`.
             x (torch.Tensor): Aggregated input of shape `(B, L, R_s, D)`.
 
         Returns:
             torch.Tensor: Deaggregate output of shape `(B, L, V_s, D)`.
         """
-        B, L, V, D = surf_vars_embed.shape
-        surf_vars_embed = surf_vars_embed.flatten(0, 1)  # (BxL, V_s, D)
+        B, L, V, D = surf_var_embed.shape
+        surf_var_embed = surf_var_embed.flatten(0, 1)  # (BxL, V_s, D)
         x = x.flatten(0, 1)  # (BxL, R_s, D)
-        _msg = f"Batch size mismatch. Found {surf_vars_embed.size(0)} and {x.size(0)}."
-        assert surf_vars_embed.size(0) == x.size(0), _msg
-        assert len(surf_vars_embed.shape) == 3, f"Expected 3 dims, found {surf_vars_embed.dims()}."
+        _msg = f"Batch size mismatch. Found {surf_var_embed.size(0)} and {x.size(0)}."
+        assert surf_var_embed.size(0) == x.size(0), _msg
+        assert len(surf_var_embed.shape) == 3, f"Expected 3 dims, found {surf_var_embed.dims()}."
         assert x.dim() == 3, f"Expected 3 dims, found {x.dim()}."
 
-        x = self.surf_vars_decoder(surf_vars_embed, x)  # (BxL, V_s, D)
+        x = self.surf_var_decoder(surf_var_embed, x)  # (BxL, V_s, D)
         x = x.reshape(B, L, V, D)
         return x
 
@@ -223,12 +223,12 @@ class Perceiver3DDecoder(nn.Module):
 
         # Decode surface vars
         if self.temporal_decoder:
-            surf_vars_tensor = torch.tensor([AURORA_VARIABLE_CODES[var] for var in surf_vars], device=x.device)
-            surf_vars_encode = variable_expansion(surf_vars_tensor, self.embed_dim).to(dtype=x.dtype)
-            surf_vars_embed = self.surf_vars_embed(surf_vars_encode).expand(B, x.size(1), -1, -1)
+            surf_var_tensor = torch.tensor([AURORA_VARIABLE_CODES[var] for var in surf_vars], device=x.device)
+            surf_var_encode = variable_expansion(surf_var_tensor, self.embed_dim).to(dtype=x.dtype)
+            surf_var_embed = self.surf_vars_embed(surf_var_encode).expand(B, x.size(1), -1, -1)
 
             #use perciever resampler do deaggregate before running heads for every surface-level variable
-            x_surf = self.deaggregate_surf_variables(surf_vars_embed, x[..., :1, :]) #(B, L, V_s, D)
+            x_surf = self.deaggregate_surf_variables(surf_var_embed, x[..., :1, :]) #(B, L, V_s, D)
             x_surf = torch.stack([self.surf_heads[name](x_surf[..., i, :]) for i, name in enumerate(surf_vars)], dim=-2) # (B, L, V_s, p*p)
             x_surf = rearrange(x_surf, 'B L V P -> B L 1 (V P)')
         else:
@@ -252,12 +252,12 @@ class Perceiver3DDecoder(nn.Module):
         if self.temporal_decoder:
             B, L, C, D = x_atmos.shape
             x_atmos = rearrange(x_atmos, 'B L C D -> (B C) L 1 D')
-            atmos_vars_tensor = torch.tensor([AURORA_VARIABLE_CODES[var] for var in atmos_vars], device=x.device)
-            atmos_vars_encode = variable_expansion(atmos_vars_tensor, self.embed_dim).to(dtype=x.dtype)
-            atmos_vars_embed = self.atmos_vars_embed(atmos_vars_encode).expand(B*C, L, -1, -1)
+            atmos_var_tensor = torch.tensor([AURORA_VARIABLE_CODES[var] for var in atmos_vars], device=x.device)
+            atmos_var_encode = variable_expansion(atmos_var_tensor, self.embed_dim).to(dtype=x.dtype)
+            atmos_var_embed = self.atmos_vars_embed(atmos_var_encode).expand(B*C, L, -1, -1)
             
             #use perciever resampler do deaggregate before running heads for every atmospheric variable
-            x_atmos = self.deaggregate_atmos_variables(atmos_vars_embed, x_atmos) #(B*C, L, V_a, D)
+            x_atmos = self.deaggregate_atmos_variables(atmos_var_embed, x_atmos) #(B*C, L, V_a, D)
             x_atmos = rearrange(x_atmos, '(B C) L V D -> B L C V D', B=B, C=C)
             x_atmos = torch.stack([self.atmos_heads[name](x_atmos[..., i, :]) for i, name in enumerate(atmos_vars)], dim=-2) #(B, L, C, V_a, p*p)
             x_atmos = rearrange(x_atmos, 'B L C V P -> B L C (V P)')

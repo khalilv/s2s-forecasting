@@ -59,7 +59,7 @@ class Aurora(torch.nn.Module):
         autocast: bool = False,
         temporal_encoder: bool = False,
         temporal_decoder: bool = False,
-
+        reinit_encoder_decoder: bool = False
     ) -> None:
         """Construct an instance of the model.
 
@@ -126,6 +126,7 @@ class Aurora(torch.nn.Module):
         self.max_history_size = max_history_size
         self.temporal_encoder = temporal_encoder
         self.temporal_decoder = temporal_decoder
+        self.reinit_encoder_decoder = reinit_encoder_decoder
 
 
         self.encoder = Perceiver3DEncoder(
@@ -280,84 +281,72 @@ class Aurora(torch.nn.Module):
             if k.startswith("net."):
                 del d[k]
                 d[k[4:]] = v
+        
+        #if reinitializing encoder and decoder remove keys from checkpoint
+        if self.reinit_encoder_decoder:
+            for k, v in list(d.items()):
+                if k.startswith("decoder.") or k.startswith("encoder."):
+                    del d[k]
+        else:
+            # Convert the ID-based parametrization to a name-based parametrization.
+            if "encoder.surf_token_embeds.weight" in d:
+                weight = d["encoder.surf_token_embeds.weight"]
+                del d["encoder.surf_token_embeds.weight"]
 
-        # Convert the ID-based parametrization to a name-based parametrization.
-        if "encoder.surf_token_embeds.weight" in d:
-            weight = d["encoder.surf_token_embeds.weight"]
-            del d["encoder.surf_token_embeds.weight"]
+                assert weight.shape[1] == 4 + 3
+                for i, name in enumerate(("2t", "10u", "10v", "msl", "lsm", "z", "slt")):
+                    d[f"encoder.surf_token_embeds.weights.{name}"] = weight[:, [i]]
 
-            assert weight.shape[1] == 4 + 3
-            for i, name in enumerate(("2t", "10u", "10v", "msl", "lsm", "z", "slt")):
-                d[f"encoder.surf_token_embeds.weights.{name}"] = weight[:, [i]]
+            if "encoder.atmos_token_embeds.weight" in d:
+                weight = d["encoder.atmos_token_embeds.weight"]
+                del d["encoder.atmos_token_embeds.weight"]
 
-        if "encoder.atmos_token_embeds.weight" in d:
-            weight = d["encoder.atmos_token_embeds.weight"]
-            del d["encoder.atmos_token_embeds.weight"]
+                assert weight.shape[1] == 5
+                for i, name in enumerate(("z", "u", "v", "t", "q")):
+                    d[f"encoder.atmos_token_embeds.weights.{name}"] = weight[:, [i]]
 
-            assert weight.shape[1] == 5
-            for i, name in enumerate(("z", "u", "v", "t", "q")):
-                d[f"encoder.atmos_token_embeds.weights.{name}"] = weight[:, [i]]
+            if "decoder.surf_head.weight" in d:
+                weight = d["decoder.surf_head.weight"]
+                bias = d["decoder.surf_head.bias"]
+                del d["decoder.surf_head.weight"]
+                del d["decoder.surf_head.bias"]
 
-        if "decoder.surf_head.weight" in d:
-            weight = d["decoder.surf_head.weight"]
-            bias = d["decoder.surf_head.bias"]
-            del d["decoder.surf_head.weight"]
-            del d["decoder.surf_head.bias"]
+                assert weight.shape[0] == 4 * self.patch_size**2
+                assert bias.shape[0] == 4 * self.patch_size**2
+                weight = weight.reshape(self.patch_size**2, 4, -1)
+                bias = bias.reshape(self.patch_size**2, 4)
 
-            assert weight.shape[0] == 4 * self.patch_size**2
-            assert bias.shape[0] == 4 * self.patch_size**2
-            weight = weight.reshape(self.patch_size**2, 4, -1)
-            bias = bias.reshape(self.patch_size**2, 4)
+                for i, name in enumerate(("2t", "10u", "10v", "msl")):
+                    d[f"decoder.surf_heads.{name}.weight"] = weight[:, i]
+                    d[f"decoder.surf_heads.{name}.bias"] = bias[:, i]
 
-            for i, name in enumerate(("2t", "10u", "10v", "msl")):
-                d[f"decoder.surf_heads.{name}.weight"] = weight[:, i]
-                d[f"decoder.surf_heads.{name}.bias"] = bias[:, i]
+            if "decoder.atmos_head.weight" in d:
+                weight = d["decoder.atmos_head.weight"]
+                bias = d["decoder.atmos_head.bias"]
+                del d["decoder.atmos_head.weight"]
+                del d["decoder.atmos_head.bias"]
 
-        if "decoder.atmos_head.weight" in d:
-            weight = d["decoder.atmos_head.weight"]
-            bias = d["decoder.atmos_head.bias"]
-            del d["decoder.atmos_head.weight"]
-            del d["decoder.atmos_head.bias"]
+                assert weight.shape[0] == 5 * self.patch_size**2
+                assert bias.shape[0] == 5 * self.patch_size**2
+                weight = weight.reshape(self.patch_size**2, 5, -1)
+                bias = bias.reshape(self.patch_size**2, 5)
 
-            assert weight.shape[0] == 5 * self.patch_size**2
-            assert bias.shape[0] == 5 * self.patch_size**2
-            weight = weight.reshape(self.patch_size**2, 5, -1)
-            bias = bias.reshape(self.patch_size**2, 5)
+                for i, name in enumerate(("z", "u", "v", "t", "q")):
+                    d[f"decoder.atmos_heads.{name}.weight"] = weight[:, i]
+                    d[f"decoder.atmos_heads.{name}.bias"] = bias[:, i]
 
-            for i, name in enumerate(("z", "u", "v", "t", "q")):
-                d[f"decoder.atmos_heads.{name}.weight"] = weight[:, i]
-                d[f"decoder.atmos_heads.{name}.bias"] = bias[:, i]
-
-        # Check if the history size is compatible and adjust weights if necessary.
-        current_history_size = d["encoder.surf_token_embeds.weights.2t"].shape[2]
-        if self.max_history_size > current_history_size:
-            self.adapt_checkpoint_max_history_size(d)
-        elif self.max_history_size < current_history_size:
-            raise AssertionError(
-                f"Cannot load checkpoint with `max_history_size` {current_history_size} "
-                f"into model with `max_history_size` {self.max_history_size}."
-            )
-
-        if self.temporal_encoder:
-            self.adapt_checkpoint_variable_patch_embedding(d)
+            # Check if the history size is compatible and adjust weights if necessary.
+            current_history_size = d["encoder.surf_token_embeds.weights.2t"].shape[2]
+            if self.max_history_size > current_history_size:
+                self.adapt_checkpoint_max_history_size(d)
+            elif self.max_history_size < current_history_size:
+                raise AssertionError(
+                    f"Cannot load checkpoint with `max_history_size` {current_history_size} "
+                    f"into model with `max_history_size` {self.max_history_size}."
+                )
 
         self.load_state_dict(d, strict=strict)
     
-    def adapt_checkpoint_variable_patch_embedding(self, checkpoint: Dict[str, torch.Tensor]) -> None:
-        """Adapt a checkpoint weights to use the VariablePatchEmbed mechanism
-
-        This implementation copies the weight from the last timestamp for each variable to the model. 
-        It mutates `checkpoint`.
-        """
-        for name, weight in list(checkpoint.items()):
-            # We only need to adapt the patch embedding in the encoder.
-            enc_surf_embedding = name.startswith("encoder.surf_token_embeds.weights.")
-            enc_atmos_embedding = name.startswith("encoder.atmos_token_embeds.weights.")
-            if enc_surf_embedding or enc_atmos_embedding:
-                # Copy the existing weights to the new tensor by selecting the last timestep for each variable
-                new_weight = weight[:,:,-1]
-                checkpoint[name] = new_weight
-
     def adapt_checkpoint_max_history_size(self, checkpoint: Dict[str, torch.Tensor]) -> None:
         """Adapt a checkpoint with smaller `max_history_size` to a model with a larger
         `max_history_size` than the current model.

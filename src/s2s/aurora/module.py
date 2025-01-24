@@ -46,6 +46,7 @@ class GlobalForecastModule(LightningModule):
         self,
         pretrained_path: str = "",
         version: int = 0,
+        reinit_encoder_decoder: bool = False,
         temporal_encoder: bool = False,
         temporal_decoder: bool = False,
         load_strict: bool = False,
@@ -85,6 +86,7 @@ class GlobalForecastModule(LightningModule):
         super().__init__()
         self.pretrained_path = pretrained_path
         self.version = version
+        self.reinit_encoder_decoder = reinit_encoder_decoder
         self.temporal_encoder = temporal_encoder
         self.temporal_decoder = temporal_decoder
         self.load_strict = load_strict
@@ -185,7 +187,8 @@ class GlobalForecastModule(LightningModule):
                 latent_levels=self.latent_levels,
                 latent_atmos_vars=self.latent_atmos_vars,
                 latent_surf_vars=self.latent_surf_vars,
-                embed_dim=self.embed_dim
+                embed_dim=self.embed_dim,
+                reinit_encoder_decoder = self.reinit_encoder_decoder
             )
         elif self.version == 1:
             self.net = AuroraSmall(
@@ -206,7 +209,8 @@ class GlobalForecastModule(LightningModule):
                 latent_levels=self.latent_levels,
                 latent_atmos_vars=self.latent_atmos_vars,
                 latent_surf_vars=self.latent_surf_vars,
-                embed_dim=self.embed_dim
+                embed_dim=self.embed_dim,
+                reinit_encoder_decoder = self.reinit_encoder_decoder
             )
         elif self.version == 2:
             self.net = AuroraHighRes(
@@ -226,7 +230,8 @@ class GlobalForecastModule(LightningModule):
                 latent_levels=self.latent_levels,
                 latent_atmos_vars=self.latent_atmos_vars,
                 latent_surf_vars=self.latent_surf_vars,
-                embed_dim=self.embed_dim
+                embed_dim=self.embed_dim,
+                reinit_encoder_decoder = self.reinit_encoder_decoder
             )
         else:
             raise ValueError(f"Invalid version number: {self.version}. Must be 0: Aurora, 1: AuroraSmall, or 2: AuroraHighRes.")
