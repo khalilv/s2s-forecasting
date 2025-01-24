@@ -284,6 +284,7 @@ class Aurora(torch.nn.Module):
         
         #if reinitializing encoder and decoder remove keys from checkpoint
         if self.reinit_encoder_decoder:
+            print('Info: Reinitializing encoder and decoder. Pretrained weights will not be used')
             for k, v in list(d.items()):
                 if k.startswith("decoder.") or k.startswith("encoder."):
                     del d[k]
