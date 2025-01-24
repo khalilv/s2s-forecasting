@@ -48,7 +48,7 @@ class Perceiver3DEncoder(nn.Module):
         perceiver_ln_eps: float = 1e-5,
         latent_atmos_vars: int = 1,
         latent_surf_vars: int = 1,
-        temporal_attention: bool = True
+        temporal_encoder: bool = False
     ) -> None:
         """Initialise.
 
@@ -81,7 +81,7 @@ class Perceiver3DEncoder(nn.Module):
         self.drop_rate = drop_rate
         self.embed_dim = embed_dim
         self.patch_size = patch_size
-        self.temporal_attention = temporal_attention
+        self.temporal_encoder = temporal_encoder
         self.atmos_vars = atmos_vars
         self.surf_vars = surf_vars
 
@@ -103,7 +103,7 @@ class Perceiver3DEncoder(nn.Module):
 
         # Patch embeddings
         assert max_history_size > 0, "At least one history step is required."
-        if self.temporal_attention:
+        if self.temporal_encoder:
             self.surf_token_embeds = VariablePatchEmbed(
                 self.surf_vars,
                 patch_size,
@@ -177,7 +177,7 @@ class Perceiver3DEncoder(nn.Module):
         #
         torch.nn.init.trunc_normal_(self.atmos_latents, std=0.02)
         torch.nn.init.trunc_normal_(self.surf_level_encoding, std=0.02)
-        if self.temporal_attention:
+        if self.temporal_encoder:
             torch.nn.init.trunc_normal_(self.atmos_var_latents, std=0.02)
             torch.nn.init.trunc_normal_(self.surf_var_latents, std=0.02)
 
@@ -298,7 +298,7 @@ class Perceiver3DEncoder(nn.Module):
         assert lat.shape[0] == H and lon.shape[-1] == W
 
         # Patch embed the surface level.
-        if self.temporal_attention:
+        if self.temporal_encoder:
             x_surf = rearrange(x_surf, "b t v h w -> (b t) v h w")
             x_surf = self.surf_token_embeds(x_surf, surf_vars)  # (B, V, L, D)
             x_surf = rearrange(x_surf, "(b t) v l d -> b t v l d", b=B, t=T)
@@ -308,7 +308,7 @@ class Perceiver3DEncoder(nn.Module):
         dtype = x_surf.dtype  # When using mixed precision, we need to keep track of the dtype.
 
         # Patch embed the atmospheric levels.
-        if self.temporal_attention:
+        if self.temporal_encoder:
             x_atmos = rearrange(x_atmos, "b t v c h w -> (b t c) v h w")
             x_atmos = self.atmos_token_embeds(x_atmos, atmos_vars)
             x_atmos = rearrange(x_atmos, "(b t c) v l d -> b t c v l d", b=B, c=C, t=T)
@@ -317,7 +317,7 @@ class Perceiver3DEncoder(nn.Module):
             x_atmos = self.atmos_token_embeds(x_atmos, atmos_vars)
             x_atmos = rearrange(x_atmos, "(b c) l d -> b c l d", b=B, c=C)
 
-        if self.temporal_attention:
+        if self.temporal_encoder:
 
             #add surface variable embedding
             surf_vars_tensor = torch.tensor([AURORA_VARIABLE_CODES[var] for var in surf_vars], device=x_surf.device)
@@ -400,7 +400,7 @@ class Perceiver3DEncoder(nn.Module):
         lead_time_emb = self.lead_time_embed(lead_time_encode)  # (B, D)
         x = x + lead_time_emb.unsqueeze(1)  # (B, L', D) + (B, 1, D)
 
-        if not self.temporal_attention:
+        if not self.temporal_encoder:
             # Add absolute time embedding.
             absolute_times_list = [t[-1].timestamp() / 3600 for t in batch.metadata.time]  # Times in hours
             absolute_times = torch.tensor(absolute_times_list, dtype=torch.float32, device=x.device)

@@ -46,11 +46,17 @@ class GlobalForecastModule(LightningModule):
         self,
         pretrained_path: str = "",
         version: int = 0,
-        temporal_attention: bool = False,
+        temporal_encoder: bool = False,
+        temporal_decoder: bool = False,
         load_strict: bool = False,
         use_default_statistics: bool = False,
         delta_time: int = 6,
         history_size: int = 2,
+        patch_size: int = 2,
+        latent_levels: int = 4,
+        latent_atmos_vars: int = 1,
+        latent_surf_vars: int = 1,
+        embed_dim: int = 512,
         use_activation_checkpointing: bool = False,
         training_phase: int = 1,
         use_automatic_optimization: bool = False,
@@ -79,11 +85,17 @@ class GlobalForecastModule(LightningModule):
         super().__init__()
         self.pretrained_path = pretrained_path
         self.version = version
-        self.temporal_attention = temporal_attention
+        self.temporal_encoder = temporal_encoder
+        self.temporal_decoder = temporal_decoder
         self.load_strict = load_strict
         self.use_default_statistics = use_default_statistics
         self.delta_time = delta_time
         self.history_size = history_size
+        self.patch_size = patch_size
+        self.latent_levels = latent_levels
+        self.latent_atmos_vars = latent_atmos_vars
+        self.latent_surf_vars = latent_surf_vars
+        self.embed_dim = embed_dim
         self.use_activation_checkpointing = use_activation_checkpointing
         self.automatic_optimization = use_automatic_optimization
         self.training_phase = training_phase
@@ -167,7 +179,13 @@ class GlobalForecastModule(LightningModule):
                 lora_mode=self.lora_mode,
                 autocast=self.autocast,
                 max_history_size=self.history_size,
-                temporal_attention=self.temporal_attention
+                temporal_encoder=self.temporal_encoder,
+                temporal_decoder=self.temporal_decoder,
+                patch_size=self.patch_size,
+                latent_levels=self.latent_levels,
+                latent_atmos_vars=self.latent_atmos_vars,
+                latent_surf_vars=self.latent_surf_vars,
+                embed_dim=self.embed_dim
             )
         elif self.version == 1:
             self.net = AuroraSmall(
@@ -182,7 +200,13 @@ class GlobalForecastModule(LightningModule):
                 lora_mode=self.lora_mode,
                 autocast=self.autocast,
                 max_history_size=self.history_size,
-                temporal_attention=self.temporal_attention
+                temporal_encoder=self.temporal_encoder,
+                temporal_decoder=self.temporal_decoder,
+                patch_size=self.patch_size,
+                latent_levels=self.latent_levels,
+                latent_atmos_vars=self.latent_atmos_vars,
+                latent_surf_vars=self.latent_surf_vars,
+                embed_dim=self.embed_dim
             )
         elif self.version == 2:
             self.net = AuroraHighRes(
@@ -196,7 +220,13 @@ class GlobalForecastModule(LightningModule):
                 lora_mode=self.lora_mode,
                 autocast=self.autocast,                
                 max_history_size=self.history_size,
-                temporal_attention=self.temporal_attention
+                temporal_encoder=self.temporal_encoder,
+                temporal_decoder=self.temporal_decoder,
+                patch_size=self.patch_size,
+                latent_levels=self.latent_levels,
+                latent_atmos_vars=self.latent_atmos_vars,
+                latent_surf_vars=self.latent_surf_vars,
+                embed_dim=self.embed_dim
             )
         else:
             raise ValueError(f"Invalid version number: {self.version}. Must be 0: Aurora, 1: AuroraSmall, or 2: AuroraHighRes.")

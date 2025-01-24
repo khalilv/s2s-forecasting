@@ -39,6 +39,8 @@ class Aurora(torch.nn.Module):
         decoder_depths: Tuple[int, ...] = (8, 10, 6),
         decoder_num_heads: Tuple[int, ...] = (32, 16, 8),
         latent_levels: int = 4,
+        latent_surf_vars: int = 1,
+        latent_atmos_vars: int = 1,
         patch_size: int = 4,
         embed_dim: int = 512,
         num_heads: int = 16,
@@ -55,7 +57,9 @@ class Aurora(torch.nn.Module):
         lora_steps: int = 40,
         lora_mode: LoRAMode = "single",
         autocast: bool = False,
-        temporal_attention: bool = True,
+        temporal_encoder: bool = False,
+        temporal_decoder: bool = False,
+
     ) -> None:
         """Construct an instance of the model.
 
@@ -79,6 +83,8 @@ class Aurora(torch.nn.Module):
             decoder_num_heads (Tuple[int, ...], optional): Number of attention heads in each decoder
                 layer. Generally, you want this to be the reversal of `encoder_num_heads`.
             latent_levels (int, optional): Number of latent pressure levels.
+            latent_surf_vars (int, optional): Number of latent surface variables. Only used when temporal attention=True. 
+            latent_atmos_vars (int, optional): Number of latent atmospheric variables. Only used when temporal attention=True. 
             patch_size (int, optional): Patch size.
             embed_dim (int, optional): Patch embedding dimension.
             num_heads (int, optional): Number of attention heads in the aggregation and
@@ -106,6 +112,10 @@ class Aurora(torch.nn.Module):
                 `"single"`.
             autocast (bool, optional): Use `torch.autocast` to reduce memory usage. Defaults to
                 `False`.
+            temporal_encoder (bool, optional): Explicitly perform cross attention across time and variable dimensions in the encoder. Defaults to
+                `False`.
+            temporal_decoder (bool, optional): Explicitly perform cross attention across time and variable dimensions in the decoder. Defaults to
+                `False`.
         """
         super().__init__()
         self.surf_vars = surf_vars
@@ -114,7 +124,8 @@ class Aurora(torch.nn.Module):
         self.timedelta = timedelta(hours=delta_time)
         self.autocast = autocast
         self.max_history_size = max_history_size
-        self.temporal_attention = temporal_attention
+        self.temporal_encoder = temporal_encoder
+        self.temporal_decoder = temporal_decoder
 
 
         self.encoder = Perceiver3DEncoder(
@@ -131,7 +142,9 @@ class Aurora(torch.nn.Module):
             latent_levels=latent_levels,
             max_history_size=max_history_size,
             perceiver_ln_eps=perceiver_ln_eps,
-            temporal_attention=temporal_attention
+            temporal_encoder=temporal_encoder, 
+            latent_atmos_vars=latent_atmos_vars,
+            latent_surf_vars=latent_surf_vars,
         )
 
         self.backbone = Swin3DTransformerBackbone(
@@ -158,6 +171,7 @@ class Aurora(torch.nn.Module):
             head_dim=embed_dim * 2 // num_heads,
             num_heads=num_heads,
             depth=dec_depth,
+            temporal_decoder=temporal_decoder,
             # Because of the concatenation, high ratios are expensive.
             # We use a lower ratio here to keep the memory in check.
             mlp_ratio=dec_mlp_ratio,
@@ -324,7 +338,7 @@ class Aurora(torch.nn.Module):
                 f"into model with `max_history_size` {self.max_history_size}."
             )
 
-        if self.temporal_attention:
+        if self.temporal_encoder:
             self.adapt_checkpoint_variable_patch_embedding(d)
 
         self.load_state_dict(d, strict=strict)
