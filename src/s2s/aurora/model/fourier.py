@@ -127,5 +127,7 @@ levels_expansion = FourierExpansion(0.01, 1e5)
 absolute_time_expansion = FourierExpansion(1, 24 * 365.25, assert_range=False)
 """:class:`.FourierExpansion`: Fourier expansion for the absolute time encoding in hours."""
 
-variable_expansion = FourierExpansion(1, 50)
-""":class:`.FourierExpansion`: Fourier expansion for all variables."""
+variable_expansion = FourierExpansion(1, 62)
+""":class:`.FourierExpansion`: Fourier expansion for all variables. Lower is set to 1 
+and upper is set to 62 which is the total number of surface + atmospheric + derived variables in ERA5 from 
+weatherbench2. GCP bucket: weatherbench2/datasets/era5/1959-2023_01_10-wb13-6h-1440x721_with_derived_variables.zarr"""
