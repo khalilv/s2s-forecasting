@@ -103,7 +103,7 @@ class Aurora(torch.nn.Module):
             max_history_size (int, optional): Maximum number of history steps. You can load
                 checkpoints with a smaller `max_history_size`, but you cannot load checkpoints
                 with a larger `max_history_size`.
-            delta_time (int, optional): The forecast horizon in hours, representing how far ahead to predict at each step.
+            delta_time (int, optional): The default forecast horizon in hours, representing how far ahead to predict at each step.
             use_lora (bool, optional): Use LoRA adaptation.
             lora_steps (int, optional): Use different LoRA adaptation for the first so-many roll-out
                 steps.
@@ -179,11 +179,13 @@ class Aurora(torch.nn.Module):
             perceiver_ln_eps=perceiver_ln_eps,
         )
 
-    def forward(self, batch: Batch) -> Batch:
+    def forward(self, batch: Batch, lead_time: Optional[timedelta] = None) -> Batch:
         """Forward pass.
 
         Args:
             batch (:class:`Batch`): Batch to run the model on.
+            lead_time: (timedelta, optional): if provided, model will forecast for this lead time, 
+                otherwise it will use the default timedelta provided during initialization 
 
         Returns:
             :class:`Batch`: Prediction for the batch.
@@ -210,19 +212,19 @@ class Aurora(torch.nn.Module):
 
         x = self.encoder(
             batch,
-            lead_time=self.timedelta,
+            lead_time=lead_time if lead_time else self.timedelta,
         )
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16) if self.autocast else contextlib.nullcontext():
             x = self.backbone(
                 x,
-                lead_time=self.timedelta,
+                lead_time=lead_time if lead_time else self.timedelta,
                 patch_res=patch_res,
                 rollout_step=batch.metadata.rollout_step,
             )
         pred = self.decoder(
             x,
             batch,
-            lead_time=self.timedelta,
+            lead_time=lead_time if lead_time else self.timedelta,
             patch_res=patch_res,
         )
 

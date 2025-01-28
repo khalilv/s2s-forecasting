@@ -2,7 +2,7 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/finetuned/phase1-6h-5.625_1step_patch_size_2
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/finetuned/phase3-6h-12h-18h-24h-5.625_patch_size_2
 
   precision: 32
 
@@ -78,7 +78,7 @@ model:
   load_strict: false
   use_default_statistics: true
   delta_time: 6
-  history_size: 2
+  history_size: 5
   patch_size: 2
   latent_levels: 4
   latent_atmos_vars: 1
@@ -86,7 +86,7 @@ model:
   embed_dim: 512
   use_activation_checkpointing: true
   use_automatic_optimization: false
-  training_phase: 1
+  training_phase: 3
   drop_path: 0.0
   drop_rate: 0.0
   use_lora: false
@@ -103,7 +103,7 @@ model:
   mae_alpha: 0.25
   mae_beta: 1.0
   mae_gamma: 1.0
-  monitor_val_step: 1
+  monitor_val_step: 4
   monitor_test_steps: [1,4,8,12,16,20,24,28,32,36,40]
   replay_buffer_lead_time_thresholds: [[4000, 24], [34000, 96], [105000, 168]]
   max_replay_buffer_size: 100
@@ -201,9 +201,9 @@ data:
   ]
   # [history_step * hrs_each_step * h = history timestamp (hrs)] for h in history_size 
   # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
-  predict_size: 1
+  predict_size: 4
   predict_step: 1
-  history_size: 1
+  history_size: 4
   history_step: 1
   hrs_each_step: 6
   max_buffer_size: 100

@@ -6,7 +6,7 @@ import torch
 import numpy as np
 import dataclasses
 from typing import Any, Callable
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pytorch_lightning import LightningModule
 from tqdm import tqdm
 from s2s.aurora.model.aurora import Aurora, AuroraSmall, AuroraHighRes
@@ -524,6 +524,47 @@ class GlobalForecastModule(LightningModule):
                                 self.replay_buffer.add((x_next, static_next, y_next, None, lead_times_next, variables, static_variables, out_variables, input_timestamps_next, output_timestamps_next, remaining_predict_steps_next, worker_ids_next))
                         else:
                             self.replay_buffer.add((x_next, static, y_next, None, lead_times_next, variables, static_variables, out_variables, input_timestamps_next, output_timestamps_next, remaining_predict_steps_next, worker_ids_next))
+        elif self.training_phase == 3:
+            x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
+
+            if not torch.all(lead_times == lead_times[0]):
+                raise NotImplementedError("Variable lead times not implemented yet.") 
+
+            input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
+            
+            random_batch_lead_time_index = np.random.randint(0, y.shape[1])
+
+            lead_times = lead_times[:, random_batch_lead_time_index]
+            target = y[:, random_batch_lead_time_index]
+            output_timestamps = output_timestamps[:, random_batch_lead_time_index]
+            
+            output_batch = self.net.forward(input_batch, lead_time=timedelta(hours=lead_times[0].item()))
+            preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
+            assert (pred_timestamps == output_timestamps).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps}'
+            if target.shape[-2:] != preds.shape[-2:]:
+                if not self.train_resolution_warning_printed:
+                    print(f'Warning: Found mismatch in resolutions target: {target.shape}, prediction: {preds.shape}. Subsetting target to match preds.')
+                    self.train_resolution_warning_printed = True
+                target = target[..., :preds.shape[-2], :preds.shape[-1]]
+        
+            loss = self.train_variable_weighted_mae(preds, target)
+            self.train_variable_weighted_mae.reset()
+
+            self.log(
+                "train/phase1_var_w_mae",
+                loss['var_w_mae'],
+                prog_bar=True,
+            )
+
+            if not self.automatic_optimization:
+                opt = self.optimizers()
+                opt.zero_grad()
+                self.manual_backward(loss['var_w_mae'])
+                opt.step()
+                lr_sched = self.lr_schedulers()
+                lr_sched.step()
+            else:
+                return loss['var_w_mae']
         else:
             raise ValueError("Training phase must be 1 or 2.") 
     
@@ -541,16 +582,24 @@ class GlobalForecastModule(LightningModule):
         
         assert self.monitor_val_step <= y.shape[1], f'Unable to monitor predictions at step {self.monitor_val_step} with a prediction size of {y.shape[1]}'
         input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
+        monitor_val_step_idx = self.monitor_val_step - 1
+        target = y[:, monitor_val_step_idx]
+        clim = climatology[:, monitor_val_step_idx]
+        output_timestamps = output_timestamps[:, monitor_val_step_idx]
+
+        if self.training_phase == 3: #get to monitor_val_step in a single prediction
+            lead_times = lead_times[:, monitor_val_step_idx]
+            output_batch = self.net.forward(input_batch, lead_time=timedelta(hours=lead_times[0].item()))
+        else: #use default delta_time to do the rollout
+            lead_times_subset = lead_times[0][:self.monitor_val_step]
+            rollout_steps = int(lead_times_subset[-1] // self.delta_time)
+            yield_steps = (lead_times_subset // self.delta_time) - 1
+            rollout_batches = [rollout_batch for rollout_batch in rollout(self.net, input_batch, steps=rollout_steps, yield_steps=yield_steps[-1:])]
+            output_batch = rollout_batches[-1]
         
-        lead_times_subset = lead_times[0][:self.monitor_val_step]
-        rollout_steps = int(lead_times_subset[-1] // self.delta_time)
-        yield_steps = (lead_times_subset // self.delta_time) - 1
-        rollout_batches = [rollout_batch for rollout_batch in rollout(self.net, input_batch, steps=rollout_steps, yield_steps=yield_steps[-1:])]
-        output_batch = rollout_batches[-1]
         preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)
-        assert (pred_timestamps == output_timestamps[:,self.monitor_val_step-1]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,self.monitor_val_step-1]}'
-        target = y[:, self.monitor_val_step-1]
-        clim = climatology[:,self.monitor_val_step-1]
+        assert (pred_timestamps == output_timestamps).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps}'
+
         if target.shape[-2:] != preds.shape[-2:]:
             if not self.train_resolution_warning_printed:
                 print(f'Warning: Found mismatch in resolutions target: {target.shape}, prediction: {preds.shape}. Subsetting target to match preds.')
