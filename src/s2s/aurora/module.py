@@ -551,7 +551,7 @@ class GlobalForecastModule(LightningModule):
             self.train_variable_weighted_mae.reset()
 
             self.log(
-                "train/phase1_var_w_mae",
+                "train/phase3_var_w_mae",
                 loss['var_w_mae'],
                 prog_bar=True,
             )
@@ -639,34 +639,69 @@ class GlobalForecastModule(LightningModule):
         
         input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
         
-        rollout_steps = int(lead_times[0][-1] // self.delta_time)
-        yield_steps = [step - 1 for step in self.monitor_test_steps]
-        assert max(yield_steps) < rollout_steps, f'Invalid test steps {self.monitor_test_steps} to monitor for {rollout_steps} rollout steps'
+        if self.training_phase == 3:
+            target_step = 0       
+            lead_time_steps = ((input_timestamps[0] - input_timestamps[0][0]) / np.timedelta64(1, 'h'))[1:]
+            while target_step < lead_times.shape[1]:
+                x_next, input_timestamps_next = [], []
+                input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
+                for step in lead_time_steps:
+                    if target_step < lead_times.shape[1]:
+                        output_batch = self.net.forward(input_batch, lead_time=timedelta(hours=step))
+                        preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)       
+                        assert (pred_timestamps == output_timestamps[:, target_step]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:, target_step]}'
+                        target = y[:,target_step] 
+                        clim = climatology[:,target_step] 
 
-        yield_step_idx = 0
-        for rollout_batch in rollout(self.net, input_batch, steps=rollout_steps, yield_steps=yield_steps):
-            step = yield_steps[yield_step_idx]
-            preds, pred_timestamps = self.deconstruct_aurora_batch(rollout_batch, out_variables)        
+                        if target.shape[-2:] != preds.shape[-2:]:
+                            if not self.test_resolution_warning_printed:
+                                print(f'Warning: Found mismatch in resolutions target: {target.shape}, prediction: {preds.shape}. Subsetting target to match preds.')
+                                self.test_resolution_warning_printed = True
+                            target = target[..., :preds.shape[-2], :preds.shape[-1]]
+                            clim = clim[..., :preds.shape[-2], :preds.shape[-1]]
+                        
+                        if target_step + 1 in self.monitor_test_steps:
+                            self.test_variable_weighted_mae[target_step + 1].update(preds, target)              
+                            self.test_lat_weighted_rmse[target_step + 1].update(preds, target)
+                            self.test_rmse_spatial_map[target_step + 1].update(preds, target)
+
+                            self.test_lat_weighted_acc[target_step + 1].update(preds, target, clim)
+                            self.test_acc_spatial_map[target_step + 1].update(preds, target, clim)
+
+                        x_next.append(preds)
+                        input_timestamps_next.append(pred_timestamps)
+                        target_step += 1
+                x = torch.cat([x[:,-1:], torch.stack(x_next, dim=1)], dim=1)
+                input_timestamps = np.concatenate([input_timestamps[:,-1:], np.stack(input_timestamps_next, axis=1)], axis=1)
+        else:
+            rollout_steps = int(lead_times[0][-1] // self.delta_time)
+            yield_steps = [step - 1 for step in self.monitor_test_steps]
+            assert max(yield_steps) < rollout_steps, f'Invalid test steps {self.monitor_test_steps} to monitor for {rollout_steps} rollout steps'
             
-            assert (pred_timestamps == output_timestamps[:,step]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
+            yield_step_idx = 0
+            for rollout_batch in rollout(self.net, input_batch, steps=rollout_steps, yield_steps=yield_steps):
+                step = yield_steps[yield_step_idx]
+                preds, pred_timestamps = self.deconstruct_aurora_batch(rollout_batch, out_variables)        
+                
+                assert (pred_timestamps == output_timestamps[:,step]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
 
-            target = y[:,step] 
-            clim = climatology[:,step] 
+                target = y[:,step] 
+                clim = climatology[:,step] 
 
-            if target.shape[-2:] != preds.shape[-2:]:
-                if not self.test_resolution_warning_printed:
-                    print(f'Warning: Found mismatch in resolutions target: {target.shape}, prediction: {preds.shape}. Subsetting target to match preds.')
-                    self.test_resolution_warning_printed = True
-                target = target[..., :preds.shape[-2], :preds.shape[-1]]
-                clim = clim[..., :preds.shape[-2], :preds.shape[-1]]
+                if target.shape[-2:] != preds.shape[-2:]:
+                    if not self.test_resolution_warning_printed:
+                        print(f'Warning: Found mismatch in resolutions target: {target.shape}, prediction: {preds.shape}. Subsetting target to match preds.')
+                        self.test_resolution_warning_printed = True
+                    target = target[..., :preds.shape[-2], :preds.shape[-1]]
+                    clim = clim[..., :preds.shape[-2], :preds.shape[-1]]
 
-            self.test_variable_weighted_mae[step + 1].update(preds, target)              
-            self.test_lat_weighted_rmse[step + 1].update(preds, target)
-            self.test_rmse_spatial_map[step + 1].update(preds, target)
+                self.test_variable_weighted_mae[step + 1].update(preds, target)              
+                self.test_lat_weighted_rmse[step + 1].update(preds, target)
+                self.test_rmse_spatial_map[step + 1].update(preds, target)
 
-            self.test_lat_weighted_acc[step + 1].update(preds, target, clim)
-            self.test_acc_spatial_map[step + 1].update(preds, target, clim)
-            yield_step_idx += 1
+                self.test_lat_weighted_acc[step + 1].update(preds, target, clim)
+                self.test_acc_spatial_map[step + 1].update(preds, target, clim)
+                yield_step_idx += 1
 
     def on_test_epoch_end(self):
         results_dict = {'lead_time_hrs': []}
