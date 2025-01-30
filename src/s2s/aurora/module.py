@@ -147,7 +147,7 @@ class GlobalForecastModule(LightningModule):
         self.train_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
 
         #validation metrics
-        val_suffix = f'{int(self.monitor_val_step*self.delta_time)}hrs' if int(self.monitor_val_step*self.delta_time) < 24 else f'{int(self.monitor_val_step*self.delta_time/24)}d'
+        val_suffix = f'{int(self.monitor_val_step*self.delta_time)}hrs'
         self.val_variable_weighted_mae = variable_weighted_mae(self.out_variables, self.mae_alpha, self.mae_beta, self.mae_gamma)
         self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize, suffix=val_suffix)
         self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize, suffix=val_suffix)
@@ -708,7 +708,7 @@ class GlobalForecastModule(LightningModule):
         for step in self.monitor_test_steps:
             lead_time = int(step*self.delta_time) #current forecast lead time in hours
             results_dict['lead_time_hrs'].append(lead_time)
-            suffix = f'{lead_time}hrs' if lead_time < 24 else f'{int(lead_time/24)}d'
+            suffix = f'{lead_time}hrs'
 
             var_w_mae = self.test_variable_weighted_mae[step].compute()
             w_rmse = self.test_lat_weighted_rmse[step].compute()
