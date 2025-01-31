@@ -106,6 +106,7 @@ model:
   monitor_val_step: 1
   monitor_test_steps: [1,4,8,12,16,20,24,28,32,36,40]
   replay_buffer_lead_time_thresholds: [[4000, 24], [34000, 96], [105000, 168]]
+  rollout_step_floors_and_ceilings: [[10000, 0, 1], [20000, 1, 4], [30000, 4, 8], [40000, 8, 12], [50000, 12, 16], [60000, 16, 20]]
   max_replay_buffer_size: 100
   send_replay_buffer_to_cpu: false
 

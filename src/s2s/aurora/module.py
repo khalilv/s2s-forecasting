@@ -79,7 +79,8 @@ class GlobalForecastModule(LightningModule):
         mae_gamma: float = 2.0,
         monitor_val_step: int = 1,
         monitor_test_steps: list = [1],
-        replay_buffer_lead_time_thresholds: list = [[0,0]],
+        replay_buffer_lead_time_thresholds: list = [[0,240]],
+        rollout_step_floors_and_ceilings: list = [[0,0,40]],
         max_replay_buffer_size: int = 100,
         send_replay_buffer_to_cpu: bool = False
     ):
@@ -120,6 +121,7 @@ class GlobalForecastModule(LightningModule):
         self.monitor_val_step = monitor_val_step
         self.monitor_test_steps = monitor_test_steps
         self.replay_buffer_lead_time_thresholds = sorted(replay_buffer_lead_time_thresholds, key=lambda x: x[0])
+        self.rollout_step_floors_and_ceilings = sorted(rollout_step_floors_and_ceilings, key=lambda x: x[0])
         self.max_replay_buffer_size = max_replay_buffer_size
         self.send_replay_buffer_to_cpu = send_replay_buffer_to_cpu
         self.plot_variables = []
@@ -460,6 +462,7 @@ class GlobalForecastModule(LightningModule):
                             k: torch.cat([input_batch.atmos_vars[k][:, 1:], v], dim=1)
                             for k, v in output_batch.atmos_vars.items()
                         },
+                        metadata=dataclasses.replace(output_batch.metadata, time=tuple(b[1:] + p for b, p in zip(input_batch.metadata.time, output_batch.metadata.time)))
                 )
                 preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)        
                 
@@ -565,14 +568,79 @@ class GlobalForecastModule(LightningModule):
                 lr_sched.step()
             else:
                 return loss['var_w_mae']
+        elif self.training_phase == 4:
+            x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
+
+            if not torch.all(lead_times == lead_times[0]):
+                raise NotImplementedError("Variable lead times not implemented yet.") 
+            
+            input_batch = self.construct_aurora_batch(x, static, variables, static_variables, input_timestamps)
+            
+            floor, ceiling = self.get_rollout_step_floor_and_ceiling()
+            random_rollout_step = np.random.randint(floor, ceiling)
+            assert random_rollout_step < y.shape[1], f'Ground truth not available for rollout step {random_rollout_step}'
+
+            if random_rollout_step == 0:
+                output_batch = self.net.forward(input_batch)
+            else:
+                with torch.no_grad():
+                    for _ in range(random_rollout_step):
+                        intermediate_batch = self.net.forward(input_batch)
+                        input_batch = dataclasses.replace(
+                            intermediate_batch,
+                            surf_vars={
+                                k: torch.cat([input_batch.surf_vars[k][:, 1:], v], dim=1)
+                                for k, v in intermediate_batch.surf_vars.items()
+                            },
+                            atmos_vars={
+                                k: torch.cat([input_batch.atmos_vars[k][:, 1:], v], dim=1)
+                                for k, v in intermediate_batch.atmos_vars.items()
+                            },
+                            metadata=dataclasses.replace(intermediate_batch.metadata, time=tuple(b[1:] + p for b, p in zip(input_batch.metadata.time, intermediate_batch.metadata.time)))
+                        )
+                output_batch = self.net.forward(input_batch)
+
+            preds, pred_timestamps = self.deconstruct_aurora_batch(output_batch, out_variables)      
+            assert (pred_timestamps == output_timestamps[:, random_rollout_step]).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:, random_rollout_step]}'
+  
+            target = y[:, random_rollout_step]
+            if target.shape[-2:] != preds.shape[-2:]:
+                if not self.train_resolution_warning_printed:
+                    print(f'Warning: Found mismatch in resolutions target: {target.shape}, prediction: {preds.shape}. Subsetting target to match preds.')
+                    self.train_resolution_warning_printed = True
+                target = target[..., :preds.shape[-2], :preds.shape[-1]]
+            loss = self.train_variable_weighted_mae(preds, target)
+            self.train_variable_weighted_mae.reset()
+            self.log(
+                "train/phase4_var_w_mae",
+                loss['var_w_mae'],
+                prog_bar=True,
+            )
+
+            if not self.automatic_optimization:
+                opt = self.optimizers()
+                opt.zero_grad()
+                self.manual_backward(loss['var_w_mae'])
+                opt.step()
+                lr_sched = self.lr_schedulers()
+                lr_sched.step()
+            else:
+                return loss['var_w_mae']
         else:
-            raise ValueError("Training phase must be 1 or 2.") 
+            raise ValueError("Training phase must be 1, 2, 3 or 4.") 
     
     def get_lead_time_threshold(self):
         for step, threshold in self.replay_buffer_lead_time_thresholds:
             if self.global_step <= step:
                 return threshold
-        return None
+        return threshold
+
+    def get_rollout_step_floor_and_ceiling(self):
+        for step, floor, ceiling in self.rollout_step_floors_and_ceilings:
+            if self.global_step <= step:
+                return floor, ceiling
+        return floor, ceiling
+
 
     def validation_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
