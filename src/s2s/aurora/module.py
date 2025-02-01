@@ -245,8 +245,8 @@ class GlobalForecastModule(LightningModule):
             self.net.configure_activation_checkpointing()
         
         if self.use_lora:
-            print('Info: Freezing backbone weights for LORA')
-            self.freeze_backbone_weights()
+            print('Info: Freezing all weights except LORA modules')
+            self.freeze_non_lora_weights()
     
     def load_pretrained_weights(self, path):
         self.net.load_checkpoint_local(path, strict=self.load_strict)
@@ -260,12 +260,12 @@ class GlobalForecastModule(LightningModule):
             self.test_rmse_spatial_map[step].to(self.device)
             self.test_acc_spatial_map[step].to(self.device)
 
-    def freeze_backbone_weights(self):
+    def freeze_non_lora_weights(self):
         for name, param in self.net.named_parameters():
             if "lora_qkv" in name or 'lora_proj' in name: 
                 param.requires_grad = True  # LoRA parameters stay trainable
-            elif "backbone" in name:
-                param.requires_grad = False  # Freeze non-LoRA parameters in the backbone
+            else:
+                param.requires_grad = False  # Freeze non-LoRA parameters
 
     def get_default_aurora_normalization_stats(self, variables):
         mean, std = [], []
