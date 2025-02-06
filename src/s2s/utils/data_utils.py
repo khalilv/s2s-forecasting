@@ -81,6 +81,16 @@ NAME_TO_WEIGHT = {
 
 DEFAULT_PRESSURE_LEVELS = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
 
+LEVEL_WEIGHTS = [l / sum(DEFAULT_PRESSURE_LEVELS) for l in DEFAULT_PRESSURE_LEVELS]
+PRESSURE_LEVEL_WEIGHTS_DICT = {}
+for var in ATMOSPHERIC_VARS:
+    for l, w in zip(DEFAULT_PRESSURE_LEVELS, LEVEL_WEIGHTS):
+        PRESSURE_LEVEL_WEIGHTS_DICT[f'{var}_{l}'] = w
+PRESSURE_LEVEL_WEIGHTS_DICT['2m_temperature'] = 1.0
+PRESSURE_LEVEL_WEIGHTS_DICT['10m_u_component_of_wind'] = 0.2
+PRESSURE_LEVEL_WEIGHTS_DICT['10m_v_component_of_wind'] = 0.2
+PRESSURE_LEVEL_WEIGHTS_DICT['mean_sea_level_pressure'] = 0.2
+
 HRS_PER_LEAP_YEAR = 8784
 
 def split_surface_atmospheric(variables: list):

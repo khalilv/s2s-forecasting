@@ -4,7 +4,7 @@
 import numpy as np
 import torch
 from torchmetrics import Metric
-from s2s.utils.data_utils import SURFACE_VARS, ATMOSPHERIC_VARS, NAME_TO_WEIGHT
+from s2s.utils.data_utils import SURFACE_VARS, ATMOSPHERIC_VARS, NAME_TO_WEIGHT, PRESSURE_LEVEL_WEIGHTS_DICT
 
 class mse(Metric):
     def __init__(self, vars, transforms=None, suffix=None, **kwargs):
@@ -117,6 +117,62 @@ class lat_weighted_mse(Metric):
             loss_dict[var_loss_name] = self.w_mse_over_hw_sum[i] / self.count
 
         loss_name = f"w_mse_{self.suffix}" if self.suffix else f"w_mse"
+        loss_dict[loss_name] = torch.mean(torch.stack(list(loss_dict.values())))
+
+        return loss_dict
+
+class pressure_level_lat_weighted_mse(Metric):
+    def __init__(self, vars, lat, transforms=None, suffix=None, **kwargs):
+        super().__init__(**kwargs)
+        self.add_state("w_mse_over_hw_sum", default=torch.zeros(len(vars)), dist_reduce_fx="sum")
+        self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
+
+        self.vars = vars
+        self.lat = lat
+        self.transforms = transforms
+        self.suffix = suffix
+        self.warning_printed = False
+        level_weights = []
+        for v in self.vars:
+            if v in PRESSURE_LEVEL_WEIGHTS_DICT:
+                level_weights.append(PRESSURE_LEVEL_WEIGHTS_DICT[v])
+            else:
+                raise ValueError(f"{v} does not have a pressure level weight assigned")                    
+        self.register_buffer("level_weights", torch.tensor(level_weights).view(1, -1, 1, 1)) # Shape (1, 1, H, 1)
+
+        #latitude weights
+        w_lat = np.cos(np.deg2rad(lat))
+        w_lat = w_lat / w_lat.mean()
+        self.register_buffer("w_lat", torch.from_numpy(w_lat).view(1, 1, -1, 1))  # Shape (1, 1, H, 1)
+
+
+    def update(self, preds: torch.Tensor, targets: torch.Tensor):
+        if self.w_lat.shape[-2] != preds.shape[-2]:
+            if not self.warning_printed:
+                print(f'Warning: Found mismatch in resolutions w_lat: {self.w_lat.shape[-2]}, prediction: {preds.shape[-2]}. Subsetting w_lat to match preds.')
+                self.warning_printed = True
+                self.w_lat = self.w_lat[..., :preds.shape[-2], :]
+            
+        if self.transforms is not None:
+            preds = self.transforms(preds)
+            targets = self.transforms(targets) 
+        
+        B = preds.shape[0]          
+        error = (preds - targets) ** 2
+        w_mse_over_hw = (error * self.w_lat * self.level_weights).mean(dim=(2,3))
+        
+        self.w_mse_over_hw_sum += w_mse_over_hw.sum(dim=0)
+        self.count += B
+
+
+    def compute(self):
+        loss_dict = {}
+
+        for i, var in enumerate(self.vars):
+            var_loss_name = f"level_w_mse_{var}_{self.suffix}" if self.suffix else f"level_w_mse_{var}"
+            loss_dict[var_loss_name] = self.w_mse_over_hw_sum[i] / self.count
+
+        loss_name = f"level_w_mse_{self.suffix}" if self.suffix else f"level_w_mse"
         loss_dict[loss_name] = torch.mean(torch.stack(list(loss_dict.values())))
 
         return loss_dict

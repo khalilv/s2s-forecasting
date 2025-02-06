@@ -17,7 +17,7 @@ from s2s.utils.metrics import (
     lat_weighted_rmse,
     acc_spatial_map,
     rmse_spatial_map,
-    lat_weighted_mse,
+    pressure_level_lat_weighted_mse
 )
 from s2s.utils.data_utils import split_surface_atmospheric, NAME_TO_VAR, SURFACE_VARS, ATMOSPHERIC_VARS, STATIC_VARS
 from s2s.utils.plot import plot_spatial_map_with_basemap
@@ -35,6 +35,7 @@ class GlobalForecastModule(LightningModule):
         patch_size: int = 2,
         latent_levels: int = 4,
         embed_dim: int = 512,
+        window_size: list = [2,6,12],
         use_activation_checkpointing: bool = False,
         drop_path: float = 0.1,
         drop_rate: float = 0.1,
@@ -58,6 +59,7 @@ class GlobalForecastModule(LightningModule):
         self.patch_size = patch_size
         self.latent_levels = latent_levels
         self.embed_dim = embed_dim
+        self.window_size = window_size
         self.use_activation_checkpointing = use_activation_checkpointing
         self.drop_path = drop_path
         self.drop_rate = drop_rate
@@ -89,18 +91,18 @@ class GlobalForecastModule(LightningModule):
         denormalize = self.denormalization.denormalize if self.denormalization else None
 
         #train metrics
-        self.train_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, suffix='norm')
+        self.train_pressure_level_lat_weighted_mse = pressure_level_lat_weighted_mse(self.out_variables, self.lat, suffix='norm')
 
         #validation metrics
         val_suffix = f'{int(self.monitor_val_step*self.delta_time)}hrs'
-        self.val_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, suffix='norm')
+        self.val_pressure_level_lat_weighted_mse = pressure_level_lat_weighted_mse(self.out_variables, self.lat, suffix='norm')
         self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize, suffix=val_suffix)
         self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize, suffix=val_suffix)
         
         #test metrics
-        self.test_lat_weighted_mse, self.test_lat_weighted_rmse, self.test_lat_weighted_acc, self.test_acc_spatial_map, self.test_rmse_spatial_map = {}, {}, {}, {}, {}
+        self.test_pressure_level_lat_weighted_mse, self.test_lat_weighted_rmse, self.test_lat_weighted_acc, self.test_acc_spatial_map, self.test_rmse_spatial_map = {}, {}, {}, {}, {}
         for step in self.monitor_test_steps:
-            self.test_lat_weighted_mse[step] = lat_weighted_mse(self.out_variables, self.lat) 
+            self.test_pressure_level_lat_weighted_mse[step] = pressure_level_lat_weighted_mse(self.out_variables, self.lat, suffix='norm') 
             self.test_lat_weighted_rmse[step] = lat_weighted_rmse(self.out_variables, self.lat, denormalize) 
             self.test_lat_weighted_acc[step] = lat_weighted_acc(self.out_variables, self.lat, denormalize) 
             self.test_acc_spatial_map[step] = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize) 
@@ -126,6 +128,7 @@ class GlobalForecastModule(LightningModule):
             patch_size=self.patch_size,
             latent_levels=self.latent_levels,
             embed_dim=self.embed_dim,
+            window_size=tuple(self.window_size)
         )
 
         if len(self.pretrained_path) > 0:
@@ -140,7 +143,7 @@ class GlobalForecastModule(LightningModule):
     def setup(self, stage: str):
         self.denormalization.to(device=self.device, dtype=self.dtype)
         for step in self.monitor_test_steps:
-            self.test_lat_weighted_mse[step].to(self.device)
+            self.test_pressure_level_lat_weighted_mse[step].to(self.device)
             self.test_lat_weighted_acc[step].to(self.device)
             self.test_lat_weighted_rmse[step].to(self.device)
             self.test_rmse_spatial_map[step].to(self.device)
@@ -278,13 +281,13 @@ class GlobalForecastModule(LightningModule):
                     self.train_resolution_warning_printed = True
                 target = target[..., :preds.shape[-2], :preds.shape[-1]]
         
-            loss = self.train_lat_weighted_mse(preds, target)
-            total_loss += loss['w_mse_norm']
-            self.train_lat_weighted_mse.reset()
+            loss = self.train_pressure_level_lat_weighted_mse(preds, target)
+            total_loss += loss['level_w_mse_norm']
+            self.train_pressure_level_lat_weighted_mse.reset()
 
         average_loss = total_loss / rollout_steps
         self.log(
-            "train/w_mse_norm",
+            "train/level_w_mse_norm",
             average_loss,
             prog_bar=True,
         )
@@ -321,7 +324,7 @@ class GlobalForecastModule(LightningModule):
             target = target[..., :preds.shape[-2], :preds.shape[-1]]
             clim = clim[..., :preds.shape[-2], :preds.shape[-1]]
 
-        self.val_lat_weighted_mse.update(preds, target)
+        self.val_pressure_level_lat_weighted_mse.update(preds, target)
         self.val_lat_weighted_rmse.update(preds, target)
         self.val_lat_weighted_acc.update(preds, target, clim)
         
@@ -330,7 +333,7 @@ class GlobalForecastModule(LightningModule):
         self.train_resolution_warning_printed = False
         w_rmse = self.val_lat_weighted_rmse.compute()
         w_acc = self.val_lat_weighted_acc.compute()
-        w_mse_norm = self.val_lat_weighted_mse.compute()
+        w_mse_norm = self.val_pressure_level_lat_weighted_mse.compute()
 
         #scalar metrics
         loss_dict = {**w_mse_norm, **w_rmse, **w_acc}
@@ -341,7 +344,7 @@ class GlobalForecastModule(LightningModule):
                 prog_bar=False,
                 sync_dist=True
             )
-        self.val_lat_weighted_mse.reset()
+        self.val_pressure_level_lat_weighted_mse.reset()
         self.val_lat_weighted_rmse.reset()
         self.val_lat_weighted_acc.reset()
 
@@ -374,7 +377,7 @@ class GlobalForecastModule(LightningModule):
                 target = target[..., :preds.shape[-2], :preds.shape[-1]]
                 clim = clim[..., :preds.shape[-2], :preds.shape[-1]]
 
-            self.test_lat_weighted_mse[step + 1].update(preds, target)              
+            self.test_pressure_level_lat_weighted_mse[step + 1].update(preds, target)              
             self.test_lat_weighted_rmse[step + 1].update(preds, target)
             self.test_rmse_spatial_map[step + 1].update(preds, target)
 
@@ -389,7 +392,7 @@ class GlobalForecastModule(LightningModule):
             results_dict['lead_time_hrs'].append(lead_time)
             suffix = f'{lead_time}hrs'
 
-            w_mse_norm = self.test_lat_weighted_mse[step].compute()
+            w_mse_norm = self.test_pressure_level_lat_weighted_mse[step].compute()
             w_rmse = self.test_lat_weighted_rmse[step].compute()
             w_acc = self.test_lat_weighted_acc[step].compute()
             rmse_spatial_maps = self.test_rmse_spatial_map[step].compute()
@@ -427,7 +430,7 @@ class GlobalForecastModule(LightningModule):
                             else:
                                 plot_spatial_map_with_basemap(data=map, lat=latitudes, lon=longitudes, title=f'{var}_{suffix}', filename=f"{self.logger.log_dir}/test_{var}_{suffix}.png")                
 
-            self.test_lat_weighted_mse[step].reset()
+            self.test_pressure_level_lat_weighted_mse[step].reset()
             self.test_lat_weighted_rmse[step].reset()
             self.test_lat_weighted_acc[step].reset()
             self.test_acc_spatial_map[step].reset()

@@ -2,13 +2,13 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/irvine/test
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/irvine/5.625/6hr_lead_time
   
   precision: 32
 
-  devices: 1
+  devices: 4
   num_nodes: 1
-  accelerator: cpu
+  accelerator: gpu
   strategy:     
     class_path: pytorch_lightning.strategies.DDPStrategy
     init_args:
@@ -47,7 +47,7 @@ trainer:
     - class_path: pytorch_lightning.callbacks.ModelCheckpoint
       init_args:
         dirpath: "${trainer.default_root_dir}/checkpoints"
-        monitor: "val/var_w_mae" # name of the logged metric which determines when model is improving
+        monitor: "val/level_w_mse_norm" # name of the logged metric which determines when model is improving
         mode: "min" # "max" means higher metric value is better, can be also "min"
         save_top_k: 1 # save k best models (determined by above metric)
         save_last: true # additionaly always save model from last epoch
@@ -78,14 +78,15 @@ model:
   patch_size: 2
   latent_levels: 4
   embed_dim: 512
+  window_size: [4, 6, 12]
   use_activation_checkpointing: true
-  drop_path: 0.0
-  drop_rate: 0.0
+  drop_path: 0.1
+  drop_rate: 0.1
   autocast: true
-  optim_lr: 5e-5
+  optim_lr: 5e-4
   optim_beta_1: 0.9
-  optim_beta_2: 0.999
-  optim_weight_decay: 5e-6
+  optim_beta_2: 0.95
+  optim_weight_decay: 1e-5
   optim_warmup_steps: 2000
   optim_max_steps: 100000
   optim_warmup_start_lr: 0.0
@@ -183,14 +184,14 @@ data:
   ]
   # [history_step * hrs_each_step * h = history timestamp (hrs)] for h in history_size 
   # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
-  predict_size: 40
+  predict_size: 1
   predict_step: 1
   history_size: 1
   history_step: 1
   hrs_each_step: 6
   max_buffer_size: 100
-  batch_size: 1
+  batch_size: 16
   mem_load: 1.0
-  num_workers: 0
+  num_workers: 2
   pin_memory: true
   normalize_data: true
