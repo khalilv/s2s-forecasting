@@ -105,12 +105,32 @@ def main():
     plot_aggregated_variable(
         npz_files=npz_files,
         labels=labels,
+        variable = 'w_acc',
+        x_key='lead_time_hrs',
+        x_label='Lead time (hrs)',
+        y_label='ACC',
+        title='Average ACC vs Lead Time (hrs)',
+        output_filename='/glade/derecho/scratch/kvirji/s2s-forecasting/plots/acc_average.png',
+    )
+    plot_aggregated_variable(
+        npz_files=npz_files,
+        labels=labels,
         variable = 'w_rmse_2m_temperature',
         x_key='lead_time_hrs',
         x_label='Lead time (hrs)',
         y_label='RMSE',
         title='T2M RMSE vs Lead Time (hrs)',
-        output_filename='/glade/derecho/scratch/kvirji/s2s-forecasting/plots/rmse_t2m_12h_hist.png',
+        output_filename='/glade/derecho/scratch/kvirji/s2s-forecasting/plots/rmse_t2m.png',
+    )
+    plot_aggregated_variable(
+        npz_files=npz_files,
+        labels=labels,
+        variable = 'w_acc_2m_temperature',
+        x_key='lead_time_hrs',
+        x_label='Lead time (hrs)',
+        y_label='ACC',
+        title='T2M ACC vs Lead Time (hrs)',
+        output_filename='/glade/derecho/scratch/kvirji/s2s-forecasting/plots/acc_t2m.png',
     )
 
 if __name__ == "__main__":

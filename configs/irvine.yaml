@@ -2,7 +2,7 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/irvine/5.625/6hr_lead_time
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/irvine/5.625/temporal/6hr_lead_time
   
   precision: 32
 
@@ -71,7 +71,7 @@ trainer:
 # ---------------------------- MODEL -------------------------------------------
 model:
   pretrained_path: ''
-  temporal_attention: false
+  temporal_attention: true
   load_strict: false
   delta_time: 6
   history_size: 2
@@ -80,15 +80,15 @@ model:
   embed_dim: 512
   window_size: [4, 6, 12]
   use_activation_checkpointing: true
-  drop_path: 0.1
-  drop_rate: 0.1
+  drop_path: 0.15
+  drop_rate: 0.15
   autocast: true
   optim_lr: 5e-4
   optim_beta_1: 0.9
   optim_beta_2: 0.95
   optim_weight_decay: 1e-5
-  optim_warmup_steps: 2000
-  optim_max_steps: 100000
+  optim_warmup_steps: 1000
+  optim_max_steps: 25000
   optim_warmup_start_lr: 0.0
   monitor_val_step: 1
   monitor_test_steps: [1,4,8,12,16,20,24,28,32,36,40]
@@ -190,7 +190,7 @@ data:
   history_step: 1
   hrs_each_step: 6
   max_buffer_size: 100
-  batch_size: 16
+  batch_size: 8
   mem_load: 1.0
   num_workers: 2
   pin_memory: true

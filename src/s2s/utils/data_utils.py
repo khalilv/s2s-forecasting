@@ -87,9 +87,9 @@ for var in ATMOSPHERIC_VARS:
     for l, w in zip(DEFAULT_PRESSURE_LEVELS, LEVEL_WEIGHTS):
         PRESSURE_LEVEL_WEIGHTS_DICT[f'{var}_{l}'] = w
 PRESSURE_LEVEL_WEIGHTS_DICT['2m_temperature'] = 1.0
-PRESSURE_LEVEL_WEIGHTS_DICT['10m_u_component_of_wind'] = 0.2
-PRESSURE_LEVEL_WEIGHTS_DICT['10m_v_component_of_wind'] = 0.2
-PRESSURE_LEVEL_WEIGHTS_DICT['mean_sea_level_pressure'] = 0.2
+PRESSURE_LEVEL_WEIGHTS_DICT['10m_u_component_of_wind'] = 0.1
+PRESSURE_LEVEL_WEIGHTS_DICT['10m_v_component_of_wind'] = 0.1
+PRESSURE_LEVEL_WEIGHTS_DICT['mean_sea_level_pressure'] = 0.1
 
 HRS_PER_LEAP_YEAR = 8784
 

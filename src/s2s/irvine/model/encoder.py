@@ -14,6 +14,7 @@ from s2s.irvine.model.fourier import (
     levels_expansion,
     pos_expansion,
     scale_expansion,
+    relative_time_expansion,
 )
 from s2s.irvine.model.patchembed import PatchEmbed
 from s2s.irvine.model.posencoding import pos_scale_enc
@@ -89,6 +90,7 @@ class WeatherEncoder(nn.Module):
             self.surf_time_query = nn.Parameter(torch.randn(1, 1, embed_dim))
             self.surf_time_agg = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
             self.surf_time_agg_norm = nn.LayerNorm(embed_dim)
+            self.history_embed = nn.Linear(embed_dim, embed_dim)
 
         # learnable embedding to encode the surface level.
         self.surf_level_encode = nn.Parameter(torch.randn(embed_dim))
@@ -121,9 +123,6 @@ class WeatherEncoder(nn.Module):
         
         # drop patches after encoding.
         self.pos_drop = nn.Dropout(p=drop_rate)
-
-        #final normalization layer before backbone
-        self.final_norm = nn.LayerNorm(embed_dim)
 
         self.apply(init_weights)
 
@@ -210,12 +209,12 @@ class WeatherEncoder(nn.Module):
             x_atmos = self.atmos_token_embeds(x_atmos, atmos_vars)  
             x_atmos = rearrange(x_atmos, "(b t c) v l d -> b t c v l d", b=B, c=C, t=T)
 
-            timestamp_hours = [[dt.timestamp() / 3600  for dt in batch] for batch in batch.metadata.time]
-            timestamp_hours_tensor = torch.tensor(timestamp_hours, dtype=torch.float32, device=x_surf.device)
-            timestamp_hours_encoded = absolute_time_expansion(timestamp_hours_tensor, self.embed_dim).to(dtype=x_surf.dtype)
-            timestamp_hours_embedding = self.absolute_time_embed(timestamp_hours_encoded)
-            x_atmos = x_atmos + timestamp_hours_embedding[:, :, None, None, None, :]
-            x_surf = x_surf + timestamp_hours_embedding[:, :, None, None, :]
+            relative_timestamp_hours = [[(batch[-1].timestamp() - dt.timestamp()) / 3600  for dt in batch] for batch in batch.metadata.time]
+            relative_timestamp_hours_tensor = torch.tensor(relative_timestamp_hours, dtype=torch.float32, device=x_surf.device)
+            relative_timestamp_hours_encoded = relative_time_expansion(relative_timestamp_hours_tensor, self.embed_dim).to(dtype=x_surf.dtype)
+            relative_timestamp_hours_embedding = self.history_embed(relative_timestamp_hours_encoded)
+            x_atmos = x_atmos + relative_timestamp_hours_embedding[:, :, None, None, None, :]
+            x_surf = x_surf + relative_timestamp_hours_embedding[:, :, None, None, :]
 
             x_surf = rearrange(x_surf, "b t v l d -> (b v) t l d")
             x_surf = self.aggregate(x_surf, self.surf_time_agg, self.surf_time_query, self.surf_time_agg_norm).squeeze()
@@ -282,14 +281,12 @@ class WeatherEncoder(nn.Module):
         lead_time_emb = self.lead_time_embed(lead_time_encode)  # (B, D)
         x = x + lead_time_emb.unsqueeze(1)  # (B, L', D) + (B, 1, D)
 
-        # add absolute time embedding here if temporal aggregation was not used. just use latest timestamp for each batch element
-        if not self.temporal_attention:
-            timestamp_hours = [t[-1].timestamp() / 3600 for t in batch.metadata.time] 
-            timestamp_hours_tensor = torch.tensor(timestamp_hours, dtype=torch.float32, device=x.device)
-            timestamp_hours_encoded = absolute_time_expansion(timestamp_hours_tensor, self.embed_dim)
-            timestamp_hours_embedding = self.absolute_time_embed(timestamp_hours_encoded.to(dtype=x.dtype))
-            x = x + timestamp_hours_embedding.unsqueeze(1)  # (B, L, D) + (B, 1, D)
-        
-        x = self.final_norm(x)
+        # add absolute time embedding. just use latest timestamp for each batch element
+        absolute_timestamp_hours = [t[-1].timestamp() / 3600 for t in batch.metadata.time] 
+        absolute_timestamp_hours_tensor = torch.tensor(absolute_timestamp_hours, dtype=torch.float32, device=x.device)
+        absolute_timestamp_hours_encoded = absolute_time_expansion(absolute_timestamp_hours_tensor, self.embed_dim)
+        absolute_timestamp_hours_embedding = self.absolute_time_embed(absolute_timestamp_hours_encoded.to(dtype=x.dtype))
+        x = x + absolute_timestamp_hours_embedding.unsqueeze(1)  # (B, L, D) + (B, 1, D)
+    
         x = self.pos_drop(x)
         return x
