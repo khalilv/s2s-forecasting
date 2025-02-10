@@ -22,6 +22,8 @@ trainer:
   sync_batchnorm: true
   enable_checkpointing: true
 
+  accumulate_grad_batches: 8
+
   # debugging
   fast_dev_run: false
 
