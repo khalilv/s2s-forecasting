@@ -205,6 +205,11 @@ class WeatherForecast(torch.nn.Module):
         if 'state_dict' in d.keys():
             d = d['state_dict']
         
+        for k, v in list(d.items()):
+            if k.startswith("net."):
+                del d[k]
+                d[k[4:]] = v
+        
         self.load_state_dict(d, strict=strict)
     
 

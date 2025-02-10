@@ -22,7 +22,9 @@ trainer:
   sync_batchnorm: true
   enable_checkpointing: true
 
-  accumulate_grad_batches: 8
+  accumulate_grad_batches: 4
+  log_every_n_steps: 10
+  gradient_clip_val: 1.0
 
   # debugging
   fast_dev_run: false
@@ -82,15 +84,15 @@ model:
   embed_dim: 512
   window_size: [4, 6, 12]
   use_activation_checkpointing: true
-  drop_path: 0.15
-  drop_rate: 0.15
+  drop_path: 0.1
+  drop_rate: 0.1
   autocast: true
   optim_lr: 5e-4
   optim_beta_1: 0.9
-  optim_beta_2: 0.95
+  optim_beta_2: 0.99
   optim_weight_decay: 1e-5
-  optim_warmup_steps: 1000
-  optim_max_steps: 25000
+  optim_warmup_steps: 750
+  optim_max_steps: 50000
   optim_warmup_start_lr: 0.0
   monitor_val_step: 1
   monitor_test_steps: [1,4,8,12,16,20,24,28,32,36,40]
@@ -180,9 +182,9 @@ data:
       "specific_humidity_1000",
     ]
   plot_variables: [
-      "2m_temperature",
-      "geopotential_500",
-      "temperature_850",
+      # "2m_temperature",
+      # "geopotential_500",
+      # "temperature_850",
   ]
   # [history_step * hrs_each_step * h = history timestamp (hrs)] for h in history_size 
   # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
@@ -191,7 +193,7 @@ data:
   history_size: 1
   history_step: 1
   hrs_each_step: 6
-  max_buffer_size: 100
+  max_buffer_size: 1000
   batch_size: 8
   mem_load: 1.0
   num_workers: 2
