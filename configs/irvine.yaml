@@ -40,6 +40,10 @@ trainer:
       prefix: ""
 
   callbacks:
+    # - class_path: pytorch_lightning.callbacks.LearningRateFinder
+    #   init_args:
+    #     attr_name: "optim_lr"
+
     - class_path: pytorch_lightning.callbacks.LearningRateMonitor
       init_args:
         logging_interval: "step"
@@ -87,7 +91,7 @@ model:
   drop_path: 0.1
   drop_rate: 0.1
   autocast: true
-  optim_lr: 5e-4
+  optim_lr: 2.75e-05
   optim_beta_1: 0.9
   optim_beta_2: 0.99
   optim_weight_decay: 1e-5
