@@ -2,21 +2,25 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/6hr_finetune
 
-  precision: 16
+  precision: 16-mixed
 
-  devices: 1
+  devices: 4
   num_nodes: 1
   accelerator: gpu
-  strategy: ddp
+  strategy:     
+    class_path: pytorch_lightning.strategies.DDPStrategy
+    init_args:
+      timeout: 02:00:00
+      # find_unused_parameters: true
 
   min_epochs: 1
   max_epochs: 50
   enable_progress_bar: true
 
-  sync_batchnorm: True
-  enable_checkpointing: True
+  sync_batchnorm: true
+  enable_checkpointing: true
 
   # debugging
   fast_dev_run: false
@@ -27,29 +31,37 @@ trainer:
       save_dir: ${trainer.default_root_dir}/logs
       name: null
       version: null
-      log_graph: False
-      default_hp_metric: True
+      log_graph: false
+      default_hp_metric: true
       prefix: ""
 
   callbacks:
+    # - class_path: pytorch_lightning.callbacks.LearningRateFinder
+    #   init_args:
+    #     attr_name: "optim_lr"
+
     - class_path: pytorch_lightning.callbacks.LearningRateMonitor
       init_args:
         logging_interval: "step"
 
+    - class_path: s2s.utils.callbacks.GradientMonitor
+      init_args:
+        log_every_n_steps: 50
+
     - class_path: pytorch_lightning.callbacks.ModelCheckpoint
       init_args:
         dirpath: "${trainer.default_root_dir}/checkpoints"
-        monitor: "val/w_rmse" # name of the logged metric which determines when model is improving
+        monitor: "val/level_w_mse_norm" # name of the logged metric which determines when model is improving
         mode: "min" # "max" means higher metric value is better, can be also "min"
         save_top_k: 1 # save k best models (determined by above metric)
-        save_last: True # additionaly always save model from last epoch
-        verbose: False
+        save_last: true # additionaly always save model from last epoch
+        verbose: false
         filename: "epoch_{epoch:03d}"
-        auto_insert_metric_name: False
+        auto_insert_metric_name: false
 
     - class_path: pytorch_lightning.callbacks.EarlyStopping
       init_args:
-        monitor: "val/w_rmse" # name of the logged metric which determines when model is improving
+        monitor: "val/level_w_mse_norm" # name of the logged metric which determines when model is improving
         mode: "min" # "max" means higher metric value is better, can be also "min"
         patience: 5 # how many validation epochs of not improving until training stops
         min_delta: 0. # minimum change in the monitored metric needed to qualify as an improvement
@@ -62,12 +74,13 @@ trainer:
 
 # ---------------------------- MODEL -------------------------------------------
 model:
+  delta_time: 6
   lr: 5e-7
   beta_1: 0.9
   beta_2: 0.999
   weight_decay: 1e-5
-  warmup_epochs: 12500
-  max_epochs: 125000
+  warmup_steps: 12500
+  max_steps: 125000
   warmup_start_lr: 1e-8
   eta_min: 1e-8
   pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/climaX_5.625deg.ckpt"
@@ -80,7 +93,9 @@ model:
   mlp_ratio: 4
   drop_path: 0.1
   drop_rate: 0.1
-  parallel_patch_embed: False
+  parallel_patch_embed: false
+  monitor_test_steps: [1,3,5]
+
 
 
 # ---------------------------- DATA -------------------------------------------
@@ -142,19 +157,16 @@ data:
   plot_variables: [
       "2m_temperature",
   ]
-  out_variables: [
-    "2m_temperature","geopotential_50"
-  ]
   # [history_step * hrs_each_step * h = history timestamp (hrs)] for h in history_size 
   # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
   predict_size: 1
-  predict_step: 4
+  predict_step: 1
   history_size: 0
   history_step: 0
   hrs_each_step: 6
-  max_buffer_size: 200
+  max_buffer_size: 10
   batch_size: 32
   mem_load: 1.0
-  num_workers: 2
-  pin_memory: True
-  normalize_data: True
+  num_workers: 0
+  pin_memory: true
+  normalize_data: true

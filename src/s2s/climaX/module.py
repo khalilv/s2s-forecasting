@@ -12,14 +12,13 @@ from s2s.climaX.arch import ClimaX
 from s2s.utils.lr_scheduler import LinearWarmupCosineAnnealingLR
 from s2s.utils.metrics import (
     lat_weighted_acc,
-    lat_weighted_mse,
+    pressure_level_lat_weighted_mse,
     lat_weighted_rmse,
     acc_spatial_map,
     rmse_spatial_map
 )
 from s2s.climaX.pos_embed import interpolate_pos_embed
-from s2s.utils.data_utils import plot_spatial_map_with_basemap
-#3) Global forecast module - abstraction for training/validation/testing steps. setup for the module including hyperparameters is included here
+from s2s.utils.plot import plot_spatial_map_with_basemap
 
 class GlobalForecastModule(LightningModule):
     """Lightning module for global forecasting with the ClimaX model.
@@ -30,8 +29,8 @@ class GlobalForecastModule(LightningModule):
         beta_1 (float, optional): Beta 1 for AdamW.
         beta_2 (float, optional): Beta 2 for AdamW.
         weight_decay (float, optional): Weight decay for AdamW.
-        warmup_epochs (int, optional): Number of warmup epochs.
-        max_epochs (int, optional): Number of total epochs.
+        warmup_steps (int, optional): Number of warmup steps.
+        max_steps (int, optional): Number of total steps.
         warmup_start_lr (float, optional): Starting learning rate for warmup.
         eta_min (float, optional): Minimum learning rate.
     """
@@ -39,12 +38,13 @@ class GlobalForecastModule(LightningModule):
     def __init__(
         self,
         pretrained_path: str = "",
+        delta_time: int = 6,
         lr: float = 5e-4,
         beta_1: float = 0.9,
         beta_2: float = 0.99,
         weight_decay: float = 1e-5,
-        warmup_epochs: int = 10000,
-        max_epochs: int = 200000,
+        warmup_steps: int = 10000,
+        max_steps: int = 200000,
         warmup_start_lr: float = 1e-8,
         eta_min: float = 1e-8,
         img_size: list = [32, 64],
@@ -56,16 +56,18 @@ class GlobalForecastModule(LightningModule):
         mlp_ratio: int = 4,
         drop_path: float = 0.1,
         drop_rate: float = 0.1,
+        monitor_test_steps: list = [1],
         parallel_patch_embed: bool = False
     ):
         super().__init__()
         self.pretrained_path = pretrained_path
+        self.delta_time = delta_time
         self.lr = lr
         self.beta_1 = beta_1
         self.beta_2 = beta_2
         self.weight_decay = weight_decay
-        self.warmup_epochs = warmup_epochs
-        self.max_epochs = max_epochs
+        self.warmup_steps = warmup_steps
+        self.max_steps = max_steps
         self.warmup_start_lr = warmup_start_lr
         self.eta_min = eta_min
         self.img_size = img_size
@@ -78,10 +80,12 @@ class GlobalForecastModule(LightningModule):
         self.drop_path = drop_path
         self.drop_rate = drop_rate
         self.parallel_patch_embed = parallel_patch_embed
+        self.monitor_test_steps = monitor_test_steps
         self.denormalization = None
         self.lat = None
         self.lon = None
         self.plot_variables = []
+        assert all(step > 0 for step in self.monitor_test_steps), 'All test steps to monitor must be > 0'
         self.save_hyperparameters(logger=False, ignore=["net"])      
 
     def load_pretrained_weights(self, pretrained_path):
@@ -119,15 +123,20 @@ class GlobalForecastModule(LightningModule):
         assert self.lat is not None, 'Latitude values not initialized yet.'
         assert self.lon is not None, 'Longitude values not initialized yet.'
         denormalize = self.denormalization.denormalize if self.denormalization else None
-        self.train_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat)
-        self.val_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, denormalize)
-        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize)
-        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize)
-        self.test_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, denormalize)        
-        self.test_rmse_spatial_map = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
-        self.test_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize)
-        self.test_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize)
-        self.test_acc_spatial_map = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
+        self.train_pressure_level_lat_weighted_mse = pressure_level_lat_weighted_mse(self.out_variables, self.lat, suffix='norm')
+        
+        val_suffix = f'{self.delta_time}hrs'
+        self.val_pressure_level_lat_weighted_mse = pressure_level_lat_weighted_mse(self.out_variables, self.lat, suffix='norm')
+        self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize, suffix=val_suffix)
+        self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize, suffix=val_suffix)
+        
+        self.test_pressure_level_lat_weighted_mse, self.test_lat_weighted_rmse, self.test_lat_weighted_acc, self.test_acc_spatial_map, self.test_rmse_spatial_map = {}, {}, {}, {}, {}
+        for step in self.monitor_test_steps:
+            self.test_pressure_level_lat_weighted_mse[step] = pressure_level_lat_weighted_mse(self.out_variables, self.lat, suffix='norm')        
+            self.test_rmse_spatial_map[step] = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
+            self.test_lat_weighted_rmse[step] = lat_weighted_rmse(self.out_variables, self.lat, denormalize)
+            self.test_lat_weighted_acc[step] = lat_weighted_acc(self.out_variables, self.lat, denormalize)
+            self.test_acc_spatial_map[step] = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
 
     def init_network(self):
         variables = self.static_variables + ["lattitude"] + self.in_variables #climaX includes 2d latitude as an input field
@@ -154,6 +163,12 @@ class GlobalForecastModule(LightningModule):
 
     def setup(self, stage: str):
         self.denormalization.to(device=self.device, dtype=self.dtype)
+        for step in self.monitor_test_steps:
+            self.test_pressure_level_lat_weighted_mse[step].to(self.device)
+            self.test_lat_weighted_acc[step].to(self.device)
+            self.test_lat_weighted_rmse[step].to(self.device)
+            self.test_rmse_spatial_map[step].to(self.device)
+            self.test_acc_spatial_map[step].to(self.device)
        
     def set_lat2d(self, normalize: bool):
         self.lat2d = torch.from_numpy(np.tile(self.lat, (self.img_size[1], 1)).T).unsqueeze(0) #climaX includes 2d latitude as an input field
@@ -175,6 +190,8 @@ class GlobalForecastModule(LightningModule):
 
         if y.shape[1] > 1:
             raise NotImplementedError('Multiple prediction steps is not supported yet.')
+        
+        assert self.delta_time == lead_times[0][0], f'Found mismatch between configured delta time {self.delta_time} and input lead time {lead_times[0][0]}'
         
         #append 2d latitude to static variables
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
@@ -200,15 +217,15 @@ class GlobalForecastModule(LightningModule):
         preds = preds.float()
         y = y.to(dtype=preds.dtype, device=preds.device).squeeze(1)
         
-        batch_loss = self.train_lat_weighted_mse(preds, y)
+        batch_loss = self.train_pressure_level_lat_weighted_mse(preds, y)
         for var in batch_loss.keys():
             self.log(
                 "train/" + var,
                 batch_loss[var],
-                prog_bar=True,
+                prog_bar=False,
             )
-        self.train_lat_weighted_mse.reset()
-        return batch_loss['w_mse']
+        self.train_pressure_level_lat_weighted_mse.reset()
+        return batch_loss['level_w_mse_norm']
     
     def validation_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, _, _, _, _ = batch
@@ -216,6 +233,8 @@ class GlobalForecastModule(LightningModule):
         if y.shape[1] > 1:
             raise NotImplementedError('Multiple prediction steps is not supported yet.')
         
+        assert self.delta_time == lead_times[0][0], f'Found mismatch between configured delta time {self.delta_time} and input lead time {lead_times[0][0]}'
+
         #append 2d latitude to static variables
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
         static = torch.cat((static,lat2d_expanded), dim=1)
@@ -241,18 +260,18 @@ class GlobalForecastModule(LightningModule):
         y = y.float().squeeze(1)
         climatology = climatology.float().squeeze(1)
 
-        self.val_lat_weighted_mse.update(preds, y)
+        self.val_pressure_level_lat_weighted_mse.update(preds, y)
         self.val_lat_weighted_rmse.update(preds, y)
 
         self.val_lat_weighted_acc.update(preds, y, climatology)
         
     def on_validation_epoch_end(self):
-        w_mse = self.val_lat_weighted_mse.compute()
+        w_mse_norm = self.val_pressure_level_lat_weighted_mse.compute()
         w_rmse = self.val_lat_weighted_rmse.compute()
         w_acc = self.val_lat_weighted_acc.compute()
        
         #scalar metrics
-        loss_dict = {**w_mse, **w_rmse, **w_acc}
+        loss_dict = {**w_mse_norm, **w_rmse, **w_acc}
         for var in loss_dict.keys():
             self.log(
                 "val/" + var,
@@ -260,81 +279,108 @@ class GlobalForecastModule(LightningModule):
                 prog_bar=False,
                 sync_dist=True
             )
-        self.val_lat_weighted_mse.reset()
+        self.val_pressure_level_lat_weighted_mse.reset()
         self.val_lat_weighted_rmse.reset()
         self.val_lat_weighted_acc.reset()
 
     def test_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
         
-        if y.shape[1] > 1:
-            raise NotImplementedError('Multiple prediction steps is not supported yet.')
+        if not torch.all(lead_times == lead_times[0]):
+            raise NotImplementedError("Variable lead times not implemented yet.")
 
         #append 2d latitude to static variables
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
         static = torch.cat((static,lat2d_expanded), dim=1)
-
-        #prepend static variables to input variables
-        static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
-        inputs = torch.cat((static, x), dim=2).to(x.dtype)
-
+        static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1)
+        current_timestamps = input_timestamps[:, -1]
         in_variables = static_variables + ["lattitude"] + variables
-
-        if inputs.shape[1] > 1:
-            raise NotImplementedError("History_range > 1 is not supported yet.")
-        inputs = inputs.squeeze(1) #squeeze history dimension
-
-        #divide lead_times by 100 following climaX
-        lead_times = lead_times / 100
-        lead_times = lead_times.squeeze(1)
-
-        preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
-
-        #set y and preds to float32 for metric calculations
-        preds = preds.float()
-        y = y.float().squeeze(1)
-        climatology = climatology.float().squeeze(1)
+        delta_times = torch.zeros(x.shape[1]) + self.delta_time 
+        dtype = x.dtype
         
-        self.test_lat_weighted_mse.update(preds, y)
-        self.test_lat_weighted_rmse.update(preds, y)
-        self.test_rmse_spatial_map.update(preds, y)
+        rollout_steps = int(lead_times[0][-1] // self.delta_time)
+        assert max(self.monitor_test_steps) - 1 <= y.shape[1], f'Invalid test steps {self.monitor_test_steps} to monitor for {y.shape[1]} rollout steps'
+        for step in range(rollout_steps):
+            #prepend static variables to input variables
+            inputs = torch.cat((static, x), dim=2).to(dtype)
 
-        self.test_lat_weighted_acc.update(preds, y, climatology)
-        self.test_acc_spatial_map.update(preds, y, climatology)
+            if inputs.shape[1] > 1:
+                raise NotImplementedError("History_range > 1 is not supported yet.")
+            inputs = inputs.squeeze(1) #squeeze history dimension
+
+            dts = delta_times / 100 #divide deltas_times by 100 following climaX
+            preds = self.net.forward(inputs, dts.to(self.device), in_variables, out_variables)
+
+            pred_timestamps = current_timestamps + delta_times.numpy().astype('timedelta64[h]')
+
+            if step + 1 in self.monitor_test_steps:
+                assert (output_timestamps[:, step] == pred_timestamps).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
+                
+                #set y and preds to float32 for metric calculations
+                preds = preds.float()
+                targets = y[:, step].float().squeeze(1)
+                clim = climatology[:, step].float().squeeze(1)
+                
+                self.test_pressure_level_lat_weighted_mse[step + 1].update(preds, targets)
+                self.test_lat_weighted_rmse[step + 1].update(preds, targets)
+                self.test_rmse_spatial_map[step + 1].update(preds, targets)
+                self.test_lat_weighted_acc[step + 1].update(preds, targets, clim)
+                self.test_acc_spatial_map[step + 1].update(preds, targets, clim)
+            
+            x = preds.unsqueeze(1)
+            current_timestamps = pred_timestamps
 
     def on_test_epoch_end(self):
-        w_mse = self.test_lat_weighted_mse.compute()
-        w_rmse = self.test_lat_weighted_rmse.compute()
-        w_acc = self.test_lat_weighted_acc.compute()
-        rmse_spatial_maps = self.test_rmse_spatial_map.compute()
-        acc_spatial_maps = self.test_acc_spatial_map.compute()
+        results_dict = {'lead_time_hrs': []}
+        for step in self.monitor_test_steps:
+            lead_time = int(step*self.delta_time) #current forecast lead time in hours
+            results_dict['lead_time_hrs'].append(lead_time)
+            suffix = f'{lead_time}hrs'
+            w_mse_norm = self.test_pressure_level_lat_weighted_mse[step].compute()
+            w_rmse = self.test_lat_weighted_rmse[step].compute()
+            w_acc = self.test_lat_weighted_acc[step].compute()
+            rmse_spatial_maps = self.test_rmse_spatial_map[step].compute()
+            acc_spatial_maps = self.test_acc_spatial_map[step].compute()
 
-        #scalar metrics
-        loss_dict = {**w_mse, **w_rmse, **w_acc}
-        for var in loss_dict.keys():
-            self.log(
-                "test/" + var,
-                loss_dict[var],
-                prog_bar=False,
-                sync_dist=True
-            )
+            #scalar metrics
+            loss_dict = {**w_mse_norm, **w_rmse, **w_acc}
+            for var in loss_dict.keys():
+                if var not in results_dict:
+                    results_dict[var] = []  
+                results_dict[var].append(loss_dict[var].item())
 
-        if self.global_rank == 0:
-            latitudes, longitudes = self.lat.copy(), self.lon.copy()
-            for plot_var in tqdm(self.plot_variables, desc="Plotting RMSE spatial maps"):
-                for var in rmse_spatial_maps.keys():
-                    if plot_var in var:
-                        plot_spatial_map_with_basemap(data=rmse_spatial_maps[var].float().cpu(), lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
-            for plot_var in tqdm(self.plot_variables, desc="Plotting ACC spatial maps"):
-                for var in acc_spatial_maps.keys():
-                    if plot_var in var:
-                        plot_spatial_map_with_basemap(data=acc_spatial_maps[var].float().cpu(), lat=latitudes, lon=longitudes, title=var, filename=f"{self.logger.log_dir}/test_{var}.png")
-
-        self.test_lat_weighted_mse.reset()
-        self.test_lat_weighted_rmse.reset()
-        self.test_lat_weighted_acc.reset()
-        self.test_acc_spatial_map.reset()
-        self.test_rmse_spatial_map.reset()
+                self.log(
+                    f'test/{var}_{suffix}',
+                    loss_dict[var],
+                    prog_bar=False,
+                    sync_dist=True
+                )
+            
+            maps_dict = {**rmse_spatial_maps, **acc_spatial_maps}
+            for var in maps_dict.keys():
+                if var not in results_dict:
+                    results_dict[var] = []  
+                results_dict[var].append(maps_dict[var].float().cpu().numpy())
+            
+            if self.global_rank == 0:
+                latitudes, longitudes = self.lat.copy(), self.lon.copy()
+                for plot_var in tqdm(self.plot_variables, desc="Plotting spatial maps"):
+                    for var in maps_dict.keys():
+                        if plot_var in var:
+                            map = maps_dict[var].float().cpu()
+                            if map.shape[0] != len(latitudes) or map.shape[1] != len(longitudes):
+                                print(f'Warning: Found mismatch in spatial map resolutions for {var}: {map.shape}, latitude: {len(latitudes)}, longitude: {len(longitudes)}. Subsetting latitude and/or longitude values to match spatial map resolution')
+                                plot_spatial_map_with_basemap(data=map, lat=latitudes[:map.shape[0]], lon=longitudes[:map.shape[1]], title=f'{var}_{suffix}', filename=f"{self.logger.log_dir}/test_{var}_{suffix}.png")
+                            else:
+                                plot_spatial_map_with_basemap(data=map, lat=latitudes, lon=longitudes, title=f'{var}_{suffix}', filename=f"{self.logger.log_dir}/test_{var}_{suffix}.png")                
+            
+            self.test_pressure_level_lat_weighted_mse[step].reset()
+            self.test_lat_weighted_rmse[step].reset()
+            self.test_lat_weighted_acc[step].reset()
+            self.test_acc_spatial_map[step].reset()
+            self.test_rmse_spatial_map[step].reset()
+        
+        np.savez(f'{self.logger.log_dir}/results.npz', **results_dict)
 
     #optimizer definition - will be used to optimize the network based
     def configure_optimizers(self):
@@ -365,8 +411,8 @@ class GlobalForecastModule(LightningModule):
 
         lr_scheduler = LinearWarmupCosineAnnealingLR(
             optimizer,
-            self.warmup_epochs,
-            self.max_epochs,
+            self.warmup_steps,
+            self.max_steps,
             self.warmup_start_lr,
             self.eta_min,
         )
