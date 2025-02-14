@@ -2,7 +2,7 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/6hr_finetune
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/baseline/6hr_finetune
 
   precision: 16-mixed
 
@@ -16,7 +16,7 @@ trainer:
       # find_unused_parameters: true
 
   min_epochs: 1
-  max_epochs: 50
+  max_epochs: 100
   enable_progress_bar: true
 
   sync_batchnorm: true
@@ -75,6 +75,8 @@ trainer:
 # ---------------------------- MODEL -------------------------------------------
 model:
   delta_time: 6
+  temporal_attention: false
+  history_size: 2
   lr: 5e-7
   beta_1: 0.9
   beta_2: 0.999
@@ -83,7 +85,7 @@ model:
   max_steps: 125000
   warmup_start_lr: 1e-8
   eta_min: 1e-8
-  pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/climaX_5.625deg.ckpt"
+  pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/climaX-5.625-cmip6.ckpt"
   img_size: [32, 64]
   patch_size: 2
   embed_dim: 1024
@@ -93,7 +95,6 @@ model:
   mlp_ratio: 4
   drop_path: 0.1
   drop_rate: 0.1
-  parallel_patch_embed: false
   monitor_test_steps: [1,3,5]
 
 
@@ -161,12 +162,12 @@ data:
   # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
   predict_size: 1
   predict_step: 1
-  history_size: 0
-  history_step: 0
+  history_size: 1
+  history_step: 1
   hrs_each_step: 6
-  max_buffer_size: 10
+  max_buffer_size: 1000
   batch_size: 32
   mem_load: 1.0
-  num_workers: 0
+  num_workers: 2
   pin_memory: true
   normalize_data: true

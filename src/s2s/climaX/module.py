@@ -39,6 +39,8 @@ class GlobalForecastModule(LightningModule):
         self,
         pretrained_path: str = "",
         delta_time: int = 6,
+        history_size: int = 2,
+        temporal_attention: bool = False,
         lr: float = 5e-4,
         beta_1: float = 0.9,
         beta_2: float = 0.99,
@@ -57,11 +59,12 @@ class GlobalForecastModule(LightningModule):
         drop_path: float = 0.1,
         drop_rate: float = 0.1,
         monitor_test_steps: list = [1],
-        parallel_patch_embed: bool = False
     ):
         super().__init__()
         self.pretrained_path = pretrained_path
         self.delta_time = delta_time
+        self.history_size = history_size
+        self.temporal_attention = temporal_attention
         self.lr = lr
         self.beta_1 = beta_1
         self.beta_2 = beta_2
@@ -79,7 +82,6 @@ class GlobalForecastModule(LightningModule):
         self.mlp_ratio = mlp_ratio
         self.drop_path = drop_path
         self.drop_rate = drop_rate
-        self.parallel_patch_embed = parallel_patch_embed
         self.monitor_test_steps = monitor_test_steps
         self.denormalization = None
         self.lat = None
@@ -99,11 +101,6 @@ class GlobalForecastModule(LightningModule):
         interpolate_pos_embed(self.net, checkpoint_model, new_size=self.net.img_size)
 
         state_dict = self.state_dict()
-        if self.net.parallel_patch_embed:
-            if "token_embeds.proj_weights" not in checkpoint_model.keys():
-                raise ValueError(
-                    "Pretrained checkpoint does not have token_embeds.proj_weights for parallel processing. Please convert the checkpoints first or disable parallel patch_embed tokenization."
-                )
 
         # checkpoint_keys = list(checkpoint_model.keys())
         for k in list(checkpoint_model.keys()):
@@ -111,9 +108,18 @@ class GlobalForecastModule(LightningModule):
                 checkpoint_model[k.replace("channel", "var")] = checkpoint_model[k]
                 del checkpoint_model[k]
         for k in list(checkpoint_model.keys()):
-            if k not in state_dict.keys() or checkpoint_model[k].shape != state_dict[k].shape:
+            if k not in state_dict.keys():
                 print(f"Removing key {k} from pretrained checkpoint")
                 del checkpoint_model[k]
+            elif checkpoint_model[k].shape != state_dict[k].shape:
+                if 'token_embeds' in k and all([state_dict[k].shape[i] == checkpoint_model[k].shape[i] for i in [0, 2, 3]]) and state_dict[k].shape[1] > checkpoint_model[k].shape[1]:
+                    print(f'Adapting initial history weights for {k}')
+                    w = torch.zeros(state_dict[k].shape)
+                    w[:, -checkpoint_model[k].shape[1]:] = checkpoint_model[k]
+                    checkpoint_model[k] = w
+                else:
+                    print(f"Removing key {k} from pretrained checkpoint")
+                    del checkpoint_model[k]
 
         # load pre-trained model
         msg = self.load_state_dict(checkpoint_model, strict=False)
@@ -150,7 +156,8 @@ class GlobalForecastModule(LightningModule):
                           mlp_ratio=self.mlp_ratio, 
                           drop_path=self.drop_path, 
                           drop_rate=self.drop_rate, 
-                          parallel_patch_embed=self.parallel_patch_embed)
+                          history_size=self.history_size,
+                          temporal_attention=self.temporal_attention)
         if len(self.pretrained_path) > 0:
             self.load_pretrained_weights(self.pretrained_path)
 
@@ -186,7 +193,7 @@ class GlobalForecastModule(LightningModule):
         print('Set variables to plot spatial maps for during evaluation: ', plot_variables)
 
     def training_step(self, batch: Any, batch_idx: int):
-        x, static, y, _, lead_times, variables, static_variables, out_variables, _, _, _, _ = batch #spread batch data 
+        x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch #spread batch data 
 
         if y.shape[1] > 1:
             raise NotImplementedError('Multiple prediction steps is not supported yet.')
@@ -202,10 +209,6 @@ class GlobalForecastModule(LightningModule):
         inputs = torch.cat((static, x), dim=2).to(x.dtype)
 
         in_variables = static_variables + ["lattitude"] + variables
-
-        if inputs.shape[1] > 1:
-            raise NotImplementedError("History_range > 1 is not supported yet.")
-        inputs = inputs.squeeze(1) #squeeze history dimension
    
         #divide lead_times by 100 following climaX
         lead_times = lead_times / 100
@@ -244,10 +247,6 @@ class GlobalForecastModule(LightningModule):
         inputs = torch.cat((static, x), dim=2).to(x.dtype)
 
         in_variables = static_variables + ["lattitude"] + variables
-
-        if inputs.shape[1] > 1:
-            raise NotImplementedError("History_range > 1 is not supported yet.")
-        inputs = inputs.squeeze(1) #squeeze history dimension
 
         #divide lead_times by 100 following climaX
         lead_times = lead_times / 100

@@ -47,7 +47,7 @@ def get_2d_sincos_pos_embed_from_grid(embed_dim, grid):
     return emb
 
 
-def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
+def get_1d_sincos_pos_embed_from_grid(embed_dim, pos, scale=10000):
     """
     embed_dim: output dimension for each position
     pos: a list of positions to be encoded: size (M,)
@@ -56,7 +56,7 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     assert embed_dim % 2 == 0
     omega = np.arange(embed_dim // 2, dtype=np.float)
     omega /= embed_dim / 2.0
-    omega = 1.0 / 10000**omega  # (D/2,)
+    omega = 1.0 / scale**omega  # (D/2,)
 
     pos = pos.reshape(-1)  # (M,)
     out = np.einsum("m,d->md", pos, omega)  # (M, D/2), outer product
@@ -104,3 +104,37 @@ def interpolate_channel_embed(checkpoint_model, new_len):
         old_len = channel_embed_checkpoint.shape[1]
         if new_len <= old_len:
             checkpoint_model["net.channel_embed"] = channel_embed_checkpoint[:, :new_len]
+
+
+def main():
+    import matplotlib.pyplot as plt
+    
+    # First embedding with 48 positions
+    embed_dim = 512
+    pos1 = np.arange(48)
+    emb1 = get_1d_sincos_pos_embed_from_grid(embed_dim, pos1)
+    
+    # Second embedding with 30 positions 
+    pos2 = np.arange(48)
+    emb2 = get_1d_sincos_pos_embed_from_grid(embed_dim, pos2, scale=1000)
+    
+    # Create plot
+    plt.figure(figsize=(12,6))
+    
+    # Plot embeddings for each position
+    for i in pos1:
+        plt.plot(emb1[i], 'b-', alpha=0.5, label='variable')
+    for j in pos2:
+        plt.plot(emb2[j], 'g-', alpha=0.5, label='time')
+    
+    plt.title('Positional Embeddings')
+    plt.xlabel('Embedding Dimension')
+    plt.ylabel('Embedding Value')
+    plt.grid(True)
+    plt.show()
+
+if __name__ == "__main__":
+    main()
+
+
+

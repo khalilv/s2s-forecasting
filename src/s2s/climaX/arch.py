@@ -13,8 +13,6 @@ from s2s.climaX.pos_embed import (
     get_2d_sincos_pos_embed,
 )
 
-from s2s.climaX.parallelpatchembed import ParallelVarPatchEmbed
-
 #4) Core architecture of ClimaX - should make an extension of this class to modify forward passes
 
 class ClimaX(nn.Module):
@@ -32,7 +30,6 @@ class ClimaX(nn.Module):
         mlp_ratio (float): ratio of mlp hidden dimension to embedding dimension
         drop_path (float): stochastic depth rate
         drop_rate (float): dropout rate
-        parallel_patch_embed (bool): whether to use parallel patch embedding
     """
 
     def __init__(
@@ -47,35 +44,44 @@ class ClimaX(nn.Module):
         mlp_ratio=4.0,
         drop_path=0.1,
         drop_rate=0.1,
-        parallel_patch_embed=False,
+        history_size=2,
+        temporal_attention=False
     ):
         super().__init__()
 
         self.img_size = img_size
         self.patch_size = patch_size
         self.in_vars = in_vars
-        self.parallel_patch_embed = parallel_patch_embed
+        self.history_size = history_size
+        self.temporal_attention = temporal_attention
+
         # variable tokenization: separate embedding layer for each input variable
-        if self.parallel_patch_embed:
-            self.token_embeds = ParallelVarPatchEmbed(len(in_vars), img_size, patch_size, embed_dim)
-            self.num_patches = self.token_embeds.num_patches
-        else:
-            self.token_embeds = nn.ModuleList(
-                [PatchEmbed(img_size, patch_size, 1, embed_dim) for i in range(len(in_vars))]
-            )
-            self.num_patches = self.token_embeds[0].num_patches
+
+        self.token_embeds = nn.ModuleList(
+            [PatchEmbed(img_size, patch_size, 1 if temporal_attention else history_size, embed_dim) for i in range(len(in_vars))]
+        )
+        self.num_patches = self.token_embeds[0].num_patches
 
         # variable embedding to denote which variable each token belongs to
-        # helps in aggregating variables
-        self.var_embed, self.var_map = self.create_var_embedding(embed_dim)
-
+        self.var_embed = nn.Parameter(torch.zeros(1, len(in_vars), embed_dim))
+        self.var_map = {}
+        for i, var in enumerate(in_vars):
+            self.var_map[var] = i
+        
         # variable aggregation: a learnable query and a single-layer cross attention
-        self.var_query = nn.Parameter(torch.zeros(1, 1, embed_dim), requires_grad=True)
+        self.var_query = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.var_agg = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
 
         # positional embedding and lead time embedding
-        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, embed_dim), requires_grad=True)
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, embed_dim))
         self.lead_time_embed = nn.Linear(1, embed_dim)
+
+        if temporal_attention:
+            # time embedding to denote which timestep each token belongs to
+            self.time_embed = nn.Parameter(torch.zeros(1, history_size, embed_dim))
+            # time aggregation: a learnable query and a single-layer cross attention
+            self.time_query = nn.Parameter(torch.zeros(1, 1, embed_dim))
+            self.time_agg = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
 
         # --------------------------------------------------------------------------
 
@@ -105,7 +111,7 @@ class ClimaX(nn.Module):
         for _ in range(decoder_depth):
             self.head.append(nn.Linear(embed_dim, embed_dim))
             self.head.append(nn.GELU())
-        self.head.append(nn.Linear(embed_dim, len(self.in_vars) * patch_size**2))
+        self.head.append(nn.Linear(embed_dim, len(in_vars) * patch_size**2))
         self.head = nn.Sequential(*self.head)
 
         # --------------------------------------------------------------------------
@@ -122,18 +128,12 @@ class ClimaX(nn.Module):
         )
         self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
 
-        var_embed = get_1d_sincos_pos_embed_from_grid(self.var_embed.shape[-1], np.arange(len(self.in_vars)))
+        var_embed = get_1d_sincos_pos_embed_from_grid(self.var_embed.shape[-1], np.arange(len(self.in_vars)), scale=10000)
         self.var_embed.data.copy_(torch.from_numpy(var_embed).float().unsqueeze(0))
 
-        # token embedding layer
-        if self.parallel_patch_embed:
-            for i in range(len(self.token_embeds.proj_weights)):
-                w = self.token_embeds.proj_weights[i].data
-                trunc_normal_(w.view([w.shape[0], -1]), std=0.02)
-        else:
-            for i in range(len(self.token_embeds)):
-                w = self.token_embeds[i].proj.weight.data
-                trunc_normal_(w.view([w.shape[0], -1]), std=0.02)
+        if self.temporal_attention:
+            time_embed = get_1d_sincos_pos_embed_from_grid(self.time_embed.shape[-1], np.arange(self.history_size), scale=1000)
+            self.time_embed.data.copy_(torch.from_numpy(time_embed).float().unsqueeze(0))
 
         # initialize nn.Linear and nn.LayerNorm
         self.apply(self._init_weights)
@@ -146,16 +146,6 @@ class ClimaX(nn.Module):
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
-
-    def create_var_embedding(self, dim):
-        var_embed = nn.Parameter(torch.zeros(1, len(self.in_vars), dim), requires_grad=True)
-        # TODO: create a mapping from var --> idx
-        var_map = {}
-        idx = 0
-        for var in self.in_vars:
-            var_map[var] = idx
-            idx += 1
-        return var_embed, var_map
 
     @lru_cache(maxsize=None)
     def get_var_ids(self, vars, device):
@@ -182,49 +172,80 @@ class ClimaX(nn.Module):
         imgs = x.reshape(shape=(x.shape[0], c, h * p, w * p))
         return imgs
 
-    #variable aggregation step 
-    def aggregate_variables(self, x: torch.Tensor):
-        """
-        x: B, V, L, D
+    #aggregation step 
+    def aggregate(self, x: torch.Tensor, aggregator: nn.MultiheadAttention, query: torch.Tensor):
+        """Aggregate information using nn.MultiHeadAttention
+
+        Args:
+            x (torch.Tensor): Tensor of shape `(B, C_in, L, D)` where `C_in` refers to the number
+                of input channels.
+            aggregator (nn.MultiheadAttention): nn.MultiheadAttention module to perform the aggregation
+            query (torch.Tensor): Tensor of shape `(1, C_out, D)` where `C_out` refers to the number
+                of aggregated channels.
+        Returns:
+            torch.Tensor: Tensor of shape `(B, C_out, L, D)` where `C_out` refers to the number 
+                of aggregated channels.
         """
         b, _, l, _ = x.shape
         x = torch.einsum("bvld->blvd", x)
         x = x.flatten(0, 1)  # BxL, V, D
 
         #perform the aggregation using multi-headed attention
-        var_query = self.var_query.repeat_interleave(x.shape[0], dim=0)
-        x, _ = self.var_agg(var_query, x, x)  # BxL, D
-        x = x.squeeze()
-
-        x = x.unflatten(dim=0, sizes=(b, l))  # B, L, D
+        q = query.repeat_interleave(x.shape[0], dim=0)
+        x, _ = aggregator(q, x, x)  # BxL, D
+        x = x.unflatten(dim=0, sizes=(b, l))  # B, L, C_out, D
+        x = torch.einsum("blcd->bcld", x)  # (B, C_out, L, D)
         return x
 
-    def forward_encoder(self, x: torch.Tensor, lead_times: torch.Tensor, variables):
-        # x: `[B, V, H, W]` shape.
+    def encoder(self, x: torch.Tensor, lead_times: torch.Tensor, in_variables):
+        """Encode input weather state
+        
+        Args:
+            x (torch.Tensor): `[B, T, V, H, W]` shape. Input weather state
+            lead_times: `[B]` shape. Forecasting lead times for each element of the batch.
+            in_variables: `[V]` shape. Names of input variables.
+        Returns:
+            x (torch.Tensor): `[B, L, D]` shape. Encoded weather state
+        """
+        B, T, V, _, _ = x.shape
 
-        if isinstance(variables, list):
-            variables = tuple(variables)
+        if isinstance(in_variables, list):
+            in_variables = tuple(in_variables)
 
         # tokenize each variable separately
         embeds = []
-        var_ids = self.get_var_ids(variables, x.device)
+        var_ids = self.get_var_ids(in_variables, x.device)
         
         #D = embed dimension
-        #L = HW/(p^2) where P = patch size
-        if self.parallel_patch_embed:
-            x = self.token_embeds(x, var_ids)  # B, V, L, D
-        else:
+        #L = HW/(p^2) where p = patch size
+        if self.temporal_attention:
+            x = x.flatten(0, 1)  # (B*T, V, H, W)
             for i in range(len(var_ids)):
                 id = var_ids[i]
                 embeds.append(self.token_embeds[id](x[:, i : i + 1]))
+            x = torch.stack(embeds, dim=1)  # B*T, V, L, D
+            x = x.unflatten(0, (B, T))  # (B, T, V, L, D)
+
+            x = x + self.time_embed[:, :T].unsqueeze(2).unsqueeze(3)
+            x = torch.einsum("btvld->bvtld", x)  # (B, V, T, L, D)
+            x = x.flatten(0, 1)  # (B*V, T, L, D)
+            x = self.aggregate(x, self.time_agg, self.time_query)  # B*V, 1, L, D
+            x = x.squeeze(1)
+            x = x.unflatten(0, (B, V))  # (B, V, L, D)
+        else:
+            x = torch.einsum("btvhw->bvthw", x)  # (B, V, T, H, W)
+            for i in range(len(var_ids)):
+                id = var_ids[i]
+                embeds.append(self.token_embeds[id](x[:, i]))
             x = torch.stack(embeds, dim=1)  # B, V, L, D
 
         # add variable embedding
-        var_embed = self.get_var_emb(self.var_embed, variables)
+        var_embed = self.get_var_emb(self.var_embed, in_variables)
         x = x + var_embed.unsqueeze(2)  # B, V, L, D
 
         # variable aggregation
-        x = self.aggregate_variables(x)  # B, L, D
+        x = self.aggregate(x, self.var_agg, self.var_query)  # B, 1, L, D
+        x = x.squeeze(1)
 
         # add pos embedding
         x = x + self.pos_embed
@@ -235,31 +256,49 @@ class ClimaX(nn.Module):
         x = x + lead_time_emb  # B, L, D
 
         x = self.pos_drop(x)
+        return x
 
-        # apply Transformer blocks
+    def backbone(self, x: torch.Tensor):
+        """Backbone consisting of several attention blocks.
+
+        Args:
+            x (torch.Tensor): `[B, L, D]` shape. Encoded weather state across the globe
+        Returns:
+            x (torch.Tensor): `[B, L, D]` shape. Transformed weather state
+        """
         for blk in self.blocks:
             x = blk(x)
         x = self.norm(x)
-
         return x
 
-    def forward(self, x, lead_times, variables, out_variables):
+    def decoder(self, x: torch.Tensor):
+        """Decode weather state back to the spatial grid
+        
+        Args:
+            x (torch.Tensor): `[B, L, D]` shape. Transformed weather state from backbone
+        Returns:
+            x (torch.Tensor): `[B, V, H, W]` shape. Decoded weather state
+        """
+        x = self.head(x)  # B, L, V*p*p
+        x = self.unpatchify(x) # B, V, H, W
+        return x
+
+    def forward(self, x, lead_times, in_variables, out_variables):
         """Forward pass through the model.
 
         Args:
-            x: `[B, Vi, H, W]` shape. Input weather/climate variables
+            x: `[B, T, V, H, W]` shape. Input weather/climate variables
             lead_times: `[B]` shape. Forecasting lead times of each element of the batch.
-            variables: `[Vi]` shape. Names of input variables.
+            variables: `[V]` shape. Names of input variables.
             output_variables: `[Vo]` shape. Names of output variables.
 
         Returns:
             preds (torch.Tensor): `[B, Vo, H, W]` shape. Predicted weather/climate variables.
         """
-        out_transformers = self.forward_encoder(x, lead_times, variables)  # B, L, D
-        preds = self.head(out_transformers)  # B, L, V*p*p
+        x = self.encoder(x, lead_times, in_variables)  # B, L, D
+        x = self.backbone(x)
+        x = self.decoder(x)
+        out_var_ids = self.get_var_ids(tuple(out_variables), x.device)
+        x = x[:, out_var_ids]
 
-        preds = self.unpatchify(preds)
-        out_var_ids = self.get_var_ids(tuple(out_variables), preds.device)
-        preds = preds[:, out_var_ids]
-
-        return preds
+        return x
