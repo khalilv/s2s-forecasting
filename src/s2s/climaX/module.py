@@ -303,10 +303,6 @@ class GlobalForecastModule(LightningModule):
             #prepend static variables to input variables
             inputs = torch.cat((static, x), dim=2).to(dtype)
 
-            if inputs.shape[1] > 1:
-                raise NotImplementedError("History_range > 1 is not supported yet.")
-            inputs = inputs.squeeze(1) #squeeze history dimension
-
             dts = delta_times / 100 #divide deltas_times by 100 following climaX
             preds = self.net.forward(inputs, dts.to(self.device), in_variables, out_variables)
 
@@ -326,7 +322,7 @@ class GlobalForecastModule(LightningModule):
                 self.test_lat_weighted_acc[step + 1].update(preds, targets, clim)
                 self.test_acc_spatial_map[step + 1].update(preds, targets, clim)
             
-            x = preds.unsqueeze(1)
+            x = torch.cat([x[:,1:], preds.unsqueeze(1)], axis=1)
             current_timestamps = pred_timestamps
 
     def on_test_epoch_end(self):
