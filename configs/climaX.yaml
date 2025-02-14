@@ -2,7 +2,7 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/baseline/6hr_finetune
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/baseline/6hr_finetune/updated_variables
 
   precision: 16-mixed
 
@@ -21,6 +21,9 @@ trainer:
 
   sync_batchnorm: true
   enable_checkpointing: true
+
+  # accumulate_grad_batches: 2
+  # log_every_n_steps: 25
 
   # debugging
   fast_dev_run: false
@@ -76,6 +79,7 @@ trainer:
 model:
   delta_time: 6
   temporal_attention: false
+  reinit_embeddings_and_prediction_head: true
   history_size: 2
   lr: 5e-7
   beta_1: 0.9
@@ -106,12 +110,14 @@ data:
   climatology_test: /glade/derecho/scratch/kvirji/DATA/preprocessed/era5_climatology/1990-2019_6h_64x32_equiangular_conservative.zarr
   static_variables: [
     "land_sea_mask",
-    "orography",
+    "geopotential_at_surface",
+    "soil_type",
   ]
   in_variables: [
       "2m_temperature",
       "10m_u_component_of_wind",
       "10m_v_component_of_wind",
+      "mean_sea_level_pressure",
       "geopotential_50",
       "geopotential_250",
       "geopotential_500",
@@ -140,13 +146,6 @@ data:
       "temperature_700",
       "temperature_850",
       "temperature_925",
-      "relative_humidity_50",
-      "relative_humidity_250",
-      "relative_humidity_500",
-      "relative_humidity_600",
-      "relative_humidity_700",
-      "relative_humidity_850",
-      "relative_humidity_925",
       "specific_humidity_50",
       "specific_humidity_250",
       "specific_humidity_500",
@@ -156,7 +155,7 @@ data:
       "specific_humidity_925",
     ]
   plot_variables: [
-      "2m_temperature",
+      # "2m_temperature",
   ]
   # [history_step * hrs_each_step * h = history timestamp (hrs)] for h in history_size 
   # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size

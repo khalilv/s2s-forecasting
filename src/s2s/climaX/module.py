@@ -41,6 +41,7 @@ class GlobalForecastModule(LightningModule):
         delta_time: int = 6,
         history_size: int = 2,
         temporal_attention: bool = False,
+        reinit_embeddings_and_prediction_head: bool = False,
         lr: float = 5e-4,
         beta_1: float = 0.9,
         beta_2: float = 0.99,
@@ -65,6 +66,7 @@ class GlobalForecastModule(LightningModule):
         self.delta_time = delta_time
         self.history_size = history_size
         self.temporal_attention = temporal_attention
+        self.reinit_embeddings_and_prediction_head = reinit_embeddings_and_prediction_head
         self.lr = lr
         self.beta_1 = beta_1
         self.beta_2 = beta_2
@@ -107,10 +109,15 @@ class GlobalForecastModule(LightningModule):
             if "channel" in k:
                 checkpoint_model[k.replace("channel", "var")] = checkpoint_model[k]
                 del checkpoint_model[k]
+
         for k in list(checkpoint_model.keys()):
             if k not in state_dict.keys():
                 print(f"Removing key {k} from pretrained checkpoint")
                 del checkpoint_model[k]
+            elif self.reinit_embeddings_and_prediction_head:  #reinitialize prediction head, variable embeddings, and token embeddings
+                if 'token_embeds' in k or 'var_embed' in k or 'head' in k:
+                    print(f"Removing key {k} from pretrained checkpoint")
+                    del checkpoint_model[k]
             elif checkpoint_model[k].shape != state_dict[k].shape:
                 if 'token_embeds' in k and all([state_dict[k].shape[i] == checkpoint_model[k].shape[i] for i in [0, 2, 3]]) and state_dict[k].shape[1] > checkpoint_model[k].shape[1]:
                     print(f'Adapting initial history weights for {k}')
@@ -145,7 +152,7 @@ class GlobalForecastModule(LightningModule):
             self.test_acc_spatial_map[step] = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
 
     def init_network(self):
-        variables = self.static_variables + ["lattitude"] + self.in_variables #climaX includes 2d latitude as an input field
+        variables = self.static_variables + ["latitude"] + self.in_variables #climaX includes 2d latitude as an input field
         self.net = ClimaX(in_vars=variables, 
                           img_size=self.img_size, 
                           patch_size=self.patch_size, 
@@ -208,7 +215,7 @@ class GlobalForecastModule(LightningModule):
         static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
         inputs = torch.cat((static, x), dim=2).to(x.dtype)
 
-        in_variables = static_variables + ["lattitude"] + variables
+        in_variables = static_variables + ["latitude"] + variables
    
         #divide lead_times by 100 following climaX
         lead_times = lead_times / 100
@@ -246,7 +253,7 @@ class GlobalForecastModule(LightningModule):
         static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
         inputs = torch.cat((static, x), dim=2).to(x.dtype)
 
-        in_variables = static_variables + ["lattitude"] + variables
+        in_variables = static_variables + ["latitude"] + variables
 
         #divide lead_times by 100 following climaX
         lead_times = lead_times / 100
@@ -293,8 +300,8 @@ class GlobalForecastModule(LightningModule):
         static = torch.cat((static,lat2d_expanded), dim=1)
         static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1)
         current_timestamps = input_timestamps[:, -1]
-        in_variables = static_variables + ["lattitude"] + variables
-        delta_times = torch.zeros(x.shape[1]) + self.delta_time 
+        in_variables = static_variables + ["latitude"] + variables
+        delta_times = torch.zeros(x.shape[0]) + self.delta_time 
         dtype = x.dtype
         
         rollout_steps = int(lead_times[0][-1] // self.delta_time)
@@ -303,7 +310,7 @@ class GlobalForecastModule(LightningModule):
             #prepend static variables to input variables
             inputs = torch.cat((static, x), dim=2).to(dtype)
 
-            dts = delta_times / 100 #divide deltas_times by 100 following climaX
+            dts = delta_times / 100 #divide deltas_times by 100 following climaX 
             preds = self.net.forward(inputs, dts.to(self.device), in_variables, out_variables)
 
             pred_timestamps = current_timestamps + delta_times.numpy().astype('timedelta64[h]')
