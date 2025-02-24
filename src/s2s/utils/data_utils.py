@@ -72,8 +72,9 @@ NAME_TO_WEIGHT = {
     "10m_u_component_of_wind": 0.77,
     "10m_v_component_of_wind": 0.66,
     "2m_temperature": 3.5,
-    "geopotential": 3.5,
+    "geopotential": 3.0,
     "specific_humidity": 0.8,
+    'relative_humidity': 3.5,
     "temperature": 1.7,
     "u_component_of_wind": 0.87,
     "v_component_of_wind": 0.6
@@ -82,15 +83,13 @@ NAME_TO_WEIGHT = {
 # DEFAULT_PRESSURE_LEVELS = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
 DEFAULT_PRESSURE_LEVELS = [50, 250, 500, 600, 700, 850, 925]
 
-LEVEL_WEIGHTS = [l / sum(DEFAULT_PRESSURE_LEVELS) for l in DEFAULT_PRESSURE_LEVELS]
-PRESSURE_LEVEL_WEIGHTS_DICT = {}
+# LEVEL_WEIGHTS = [l / sum(DEFAULT_PRESSURE_LEVELS) for l in DEFAULT_PRESSURE_LEVELS]
+WEIGHTS_DICT = {}
 for var in ATMOSPHERIC_VARS:
-    for l, w in zip(DEFAULT_PRESSURE_LEVELS, LEVEL_WEIGHTS):
-        PRESSURE_LEVEL_WEIGHTS_DICT[f'{var}_{l}'] = w
-PRESSURE_LEVEL_WEIGHTS_DICT['2m_temperature'] = 1.0
-PRESSURE_LEVEL_WEIGHTS_DICT['10m_u_component_of_wind'] = 0.2#0.1
-PRESSURE_LEVEL_WEIGHTS_DICT['10m_v_component_of_wind'] = 0.2#0.1
-PRESSURE_LEVEL_WEIGHTS_DICT['mean_sea_level_pressure'] = 0.2#0.1
+    for l in DEFAULT_PRESSURE_LEVELS:
+        WEIGHTS_DICT[f'{var}_{l}'] = NAME_TO_WEIGHT[var]
+for var in SURFACE_VARS:
+    WEIGHTS_DICT[var] = NAME_TO_WEIGHT[var]
 
 HRS_PER_LEAP_YEAR = 8784
 
