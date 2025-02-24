@@ -80,7 +80,9 @@ class ClimaX(nn.Module):
             # time embedding to denote which timestep each token belongs to
             self.time_embed = nn.Parameter(torch.zeros(1, history_size, embed_dim))
             # time aggregation: a learnable query and a single-layer cross attention
-            self.time_query = nn.Parameter(torch.zeros(1, 1, embed_dim))
+            self.time_queries = nn.ParameterList(
+                [nn.Parameter(torch.zeros(1,1,embed_dim)) for i in range(len(in_vars))]
+            )
             self.time_agg = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
 
         # --------------------------------------------------------------------------
@@ -227,11 +229,12 @@ class ClimaX(nn.Module):
             x = x.unflatten(0, (B, T))  # (B, T, V, L, D)
 
             x = x + self.time_embed[:, :T].unsqueeze(2).unsqueeze(3)
-            x = torch.einsum("btvld->bvtld", x)  # (B, V, T, L, D)
-            x = x.flatten(0, 1)  # (B*V, T, L, D)
-            x = self.aggregate(x, self.time_agg, self.time_query)  # B*V, 1, L, D
-            x = x.squeeze(1)
-            x = x.unflatten(0, (B, V))  # (B, V, L, D)
+            x = torch.einsum("btvld->bvtld", x)  # (B, V, T, L, D)            
+            x_agg = []
+            for i in range(len(var_ids)):
+                id = var_ids[i]
+                x_agg.append(self.aggregate(x[:,i], self.time_agg, self.time_queries[id]).squeeze(1))  # B, L, D
+            x = torch.stack(x_agg, dim=1)  # B, V, L, D
         else:
             x = torch.einsum("btvhw->bvthw", x)  # (B, V, T, H, W)
             for i in range(len(var_ids)):
