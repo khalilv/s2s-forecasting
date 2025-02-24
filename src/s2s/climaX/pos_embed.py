@@ -106,35 +106,5 @@ def interpolate_channel_embed(checkpoint_model, new_len):
             checkpoint_model["net.channel_embed"] = channel_embed_checkpoint[:, :new_len]
 
 
-def main():
-    import matplotlib.pyplot as plt
-    
-    # First embedding with 48 positions
-    embed_dim = 512
-    pos1 = np.arange(48)
-    emb1 = get_1d_sincos_pos_embed_from_grid(embed_dim, pos1)
-    
-    # Second embedding with 30 positions 
-    pos2 = np.arange(48)
-    emb2 = get_1d_sincos_pos_embed_from_grid(embed_dim, pos2, scale=1000)
-    
-    # Create plot
-    plt.figure(figsize=(12,6))
-    
-    # Plot embeddings for each position
-    for i in pos1:
-        plt.plot(emb1[i], 'b-', alpha=0.5, label='variable')
-    for j in pos2:
-        plt.plot(emb2[j], 'g-', alpha=0.5, label='time')
-    
-    plt.title('Positional Embeddings')
-    plt.xlabel('Embedding Dimension')
-    plt.ylabel('Embedding Value')
-    plt.grid(True)
-    plt.show()
-
-if __name__ == "__main__":
-    main()
-
 
 

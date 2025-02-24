@@ -124,6 +124,9 @@ class GlobalForecastDataModule(LightningDataModule):
         normalize_std = np.array([statistics[f"{var}_std"] for var in variables])
         return normalize_mean, normalize_std
     
+    def get_history_size_and_step(self):
+        return self.history_size, self.history_step
+    
     def get_transforms(self, group: str):
         if group == 'in':
             return copy.deepcopy(self.in_transforms)

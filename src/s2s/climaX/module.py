@@ -39,7 +39,6 @@ class GlobalForecastModule(LightningModule):
         self,
         pretrained_path: str = "",
         delta_time: int = 6,
-        history_size: int = 2,
         temporal_attention: bool = False,
         reinit_embeddings_and_prediction_head: bool = False,
         lr: float = 5e-4,
@@ -64,7 +63,6 @@ class GlobalForecastModule(LightningModule):
         super().__init__()
         self.pretrained_path = pretrained_path
         self.delta_time = delta_time
-        self.history_size = history_size
         self.temporal_attention = temporal_attention
         self.reinit_embeddings_and_prediction_head = reinit_embeddings_and_prediction_head
         self.lr = lr
@@ -164,12 +162,17 @@ class GlobalForecastModule(LightningModule):
                           drop_path=self.drop_path, 
                           drop_rate=self.drop_rate, 
                           history_size=self.history_size,
+                          history_step=self.history_step,
                           temporal_attention=self.temporal_attention)
         if len(self.pretrained_path) > 0:
             self.load_pretrained_weights(self.pretrained_path)
 
     def set_denormalization(self, denormalization):
         self.denormalization = denormalization
+    
+    def set_history_size_and_step(self, history_size, history_step):
+        self.history_size = history_size + 1 # +1 because the model considers the current timestep as history
+        self.history_step = history_step
       
     def set_lat_lon(self, lat, lon):
         self.lat = lat

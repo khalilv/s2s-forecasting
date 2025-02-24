@@ -45,6 +45,7 @@ class ClimaX(nn.Module):
         drop_path=0.1,
         drop_rate=0.1,
         history_size=2,
+        history_step=1,
         temporal_attention=False
     ):
         super().__init__()
@@ -53,6 +54,7 @@ class ClimaX(nn.Module):
         self.patch_size = patch_size
         self.in_vars = in_vars
         self.history_size = history_size
+        self.history_step = history_step
         self.temporal_attention = temporal_attention
 
         # variable tokenization: separate embedding layer for each input variable
@@ -134,8 +136,19 @@ class ClimaX(nn.Module):
         self.var_embed.data.copy_(torch.from_numpy(var_embed).float().unsqueeze(0))
 
         if self.temporal_attention:
-            time_embed = get_1d_sincos_pos_embed_from_grid(self.time_embed.shape[-1], np.arange(self.history_size), scale=1000)
+            timesteps = np.arange(self.history_size)[::-1] * -self.history_step
+            time_embed = get_1d_sincos_pos_embed_from_grid(self.time_embed.shape[-1], timesteps, scale=1000)
             self.time_embed.data.copy_(torch.from_numpy(time_embed).float().unsqueeze(0))
+
+            #start with large initial weight on last timestep for time aggregation 
+            for i in range(len(self.in_vars)):
+                self.time_queries[i].data.copy_(self.time_embed.data[:, -1:])
+                
+            embed_dim = self.time_agg.embed_dim
+            self.time_agg.in_proj_weight[embed_dim:2*embed_dim].data.copy_(torch.eye(embed_dim))
+            self.time_agg.in_proj_bias[embed_dim:2*embed_dim].data.zero_()
+            self.time_agg.in_proj_weight[:embed_dim].data.copy_(torch.eye(embed_dim))
+            self.time_agg.in_proj_bias[:embed_dim].data.zero_()
 
         # initialize nn.Linear and nn.LayerNorm
         self.apply(self._init_weights)
