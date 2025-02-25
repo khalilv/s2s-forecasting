@@ -245,7 +245,7 @@ class GlobalForecastModule(LightningModule):
                 prog_bar=False,
             )
         self.train_lat_weighted_mse.reset()
-        return batch_loss['level_w_mse_norm']
+        return batch_loss['w_mse_norm']
     
     def validation_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, _, _, _, _ = batch
