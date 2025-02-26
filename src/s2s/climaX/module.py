@@ -41,7 +41,6 @@ class GlobalForecastModule(LightningModule):
         pretrained_path: str = "",
         delta_time: int = 6,
         temporal_attention: bool = False,
-        reinit_embeddings_and_prediction_head: bool = False,
         lr: float = 5e-4,
         beta_1: float = 0.9,
         beta_2: float = 0.99,
@@ -65,7 +64,6 @@ class GlobalForecastModule(LightningModule):
         self.pretrained_path = pretrained_path
         self.delta_time = delta_time
         self.temporal_attention = temporal_attention
-        self.reinit_embeddings_and_prediction_head = reinit_embeddings_and_prediction_head
         self.lr = lr
         self.beta_1 = beta_1
         self.beta_2 = beta_2
@@ -113,10 +111,6 @@ class GlobalForecastModule(LightningModule):
             if k not in state_dict.keys():
                 print(f"Removing key {k} from pretrained checkpoint")
                 del checkpoint_model[k]
-            elif self.reinit_embeddings_and_prediction_head:  #reinitialize prediction head, variable embeddings, and token embeddings
-                if 'token_embeds' in k or 'var_embed' in k or 'head' in k:
-                    print(f"Removing key {k} from pretrained checkpoint")
-                    del checkpoint_model[k]
             elif checkpoint_model[k].shape != state_dict[k].shape:
                 if 'token_embeds' in k and all([state_dict[k].shape[i] == checkpoint_model[k].shape[i] for i in [0, 2, 3]]) and state_dict[k].shape[1] > checkpoint_model[k].shape[1]:
                     print(f'Adapting initial history weights for {k}')
