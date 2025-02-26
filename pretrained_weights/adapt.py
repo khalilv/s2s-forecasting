@@ -1,7 +1,9 @@
 import torch
 
 def main():
-    ckpt = torch.load('/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/climaX-5.625-cmip6.ckpt', map_location=torch.device('cpu'))
+    filename = '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/no_rel_humid/6h_finetune/checkpoints/last.ckpt'
+    ckpt = torch.load(filename, map_location=torch.device('cpu'))
+
     rel_humid_idxs = [34,35,36,37,38,39,40]
     non_rel_humid_idxs = [i for i in range(48) if i not in rel_humid_idxs]
     ckpt['state_dict']['net.channel_embed'] = ckpt['state_dict']['net.channel_embed'][:, non_rel_humid_idxs]
