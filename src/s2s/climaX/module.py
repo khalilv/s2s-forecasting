@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 # credits: https://github.com/ashleve/lightning-hydra-template/blob/main/src/models/mnist_module.py
-from typing import Any, Callable
+from typing import Any
 import numpy as np
 import torch
 from pytorch_lightning import LightningModule
@@ -58,6 +58,7 @@ class GlobalForecastModule(LightningModule):
         mlp_ratio: int = 4,
         drop_path: float = 0.1,
         drop_rate: float = 0.1,
+        monitor_val_step: int = None,
         monitor_test_steps: list = [1],
     ):
         super().__init__()
@@ -81,11 +82,16 @@ class GlobalForecastModule(LightningModule):
         self.mlp_ratio = mlp_ratio
         self.drop_path = drop_path
         self.drop_rate = drop_rate
+        self.monitor_val_step = monitor_val_step
         self.monitor_test_steps = monitor_test_steps
         self.denormalization = None
         self.lat = None
         self.lon = None
         self.plot_variables = []
+        if self.monitor_val_step:
+            assert self.monitor_val_step > 0, 'Validation step to monitor must be > 0'
+        else:
+            print('Info: Validation step to monitor not provided. Will monitor the average across all validation steps')
         assert all(step > 0 for step in self.monitor_test_steps), 'All test steps to monitor must be > 0'
         self.save_hyperparameters(logger=False, ignore=["net"])      
 
@@ -137,8 +143,11 @@ class GlobalForecastModule(LightningModule):
 
         self.train_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, var_weights, suffix='norm')
         
-        val_suffix = f'{self.delta_time}hrs'
-        self.val_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, var_weights, suffix='norm')
+        if self.monitor_val_step:
+            val_suffix = f'{int(self.delta_time*self.monitor_val_step)}hrs'
+        else:
+            val_suffix = 'average'
+        self.val_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, var_weights, suffix=f'norm_{val_suffix}')
         self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize, suffix=val_suffix)
         self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize, suffix=val_suffix)
         
@@ -206,74 +215,100 @@ class GlobalForecastModule(LightningModule):
     def training_step(self, batch: Any, batch_idx: int):
         x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch #spread batch data 
 
-        if y.shape[1] > 1:
-            raise NotImplementedError('Multiple prediction steps is not supported yet.')
+        if not torch.all(lead_times == lead_times[0]):
+            raise NotImplementedError("Variable lead times not implemented yet.")
         
         assert self.delta_time == lead_times[0][0], f'Found mismatch between configured delta time {self.delta_time} and input lead time {lead_times[0][0]}'
         
         #append 2d latitude to static variables
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
         static = torch.cat((static,lat2d_expanded), dim=1)
-
-        #prepend static variables to input variables
         static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
-        inputs = torch.cat((static, x), dim=2).to(x.dtype)
-
+        current_timestamps = input_timestamps[:, -1]
         in_variables = static_variables + ["latitude"] + variables
-   
-        #divide lead_times by 100 following climaX
-        lead_times = lead_times / 100
-        lead_times = lead_times.squeeze(1)
+        delta_times = torch.zeros(x.shape[0]) + self.delta_time 
+        dtype = x.dtype
 
-        preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
-        
-        #set y and preds to float32 for metric calculations
-        preds = preds.float()
-        y = y.to(dtype=preds.dtype, device=preds.device).squeeze(1)
-        
-        batch_loss = self.train_lat_weighted_mse(preds, y)
+        rollout_steps = int(lead_times[0][-1] // self.delta_time)
+        batch_loss = {}
+        for step in range(rollout_steps):
+            #prepend static variables to input variables
+            inputs = torch.cat((static, x), dim=2).to(dtype)
+
+            dts = delta_times / 100 #divide deltas_times by 100 following climaX 
+            preds = self.net.forward(inputs, dts.to(self.device), in_variables, out_variables)
+
+            pred_timestamps = current_timestamps + delta_times.numpy().astype('timedelta64[h]')
+            assert (output_timestamps[:, step] == pred_timestamps).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
+
+            #set y and preds to float32 for metric calculations
+            preds = preds.float()
+            targets = y[:, step].float().squeeze(1)
+            
+            step_loss = self.train_lat_weighted_mse(preds, targets)
+            for var in step_loss.keys():
+                if var in batch_loss:
+                    batch_loss[var] += step_loss[var]
+                else:
+                    batch_loss[var] = step_loss[var]
+            
+            self.train_lat_weighted_mse.reset()
+            x = torch.cat([x[:,1:], preds.unsqueeze(1)], axis=1)
+            current_timestamps = pred_timestamps
+       
         for var in batch_loss.keys():
             self.log(
                 "train/" + var,
-                batch_loss[var],
+                batch_loss[var] / rollout_steps,
                 prog_bar=False,
             )
-        self.train_lat_weighted_mse.reset()
-        return batch_loss['w_mse_norm']
+        return batch_loss['w_mse_norm'] / rollout_steps
     
     def validation_step(self, batch: Any, batch_idx: int):
-        x, static, y, climatology, lead_times, variables, static_variables, out_variables, _, _, _, _ = batch
+        x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
         
-        if y.shape[1] > 1:
-            raise NotImplementedError('Multiple prediction steps is not supported yet.')
-        
+        if not torch.all(lead_times == lead_times[0]):
+            raise NotImplementedError("Variable lead times not implemented yet.")
+
         assert self.delta_time == lead_times[0][0], f'Found mismatch between configured delta time {self.delta_time} and input lead time {lead_times[0][0]}'
 
         #append 2d latitude to static variables
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
         static = torch.cat((static,lat2d_expanded), dim=1)
-
-        #prepend static variables to input variables
         static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
-        inputs = torch.cat((static, x), dim=2).to(x.dtype)
-
+        current_timestamps = input_timestamps[:, -1]
         in_variables = static_variables + ["latitude"] + variables
+        delta_times = torch.zeros(x.shape[0]) + self.delta_time 
+        dtype = x.dtype
 
-        #divide lead_times by 100 following climaX
-        lead_times = lead_times / 100
-        lead_times = lead_times.squeeze(1)
+        rollout_steps = int(lead_times[0][-1] // self.delta_time)
+        if self.monitor_val_step:
+            assert self.monitor_val_step - 1 <= y.shape[1], f'Invalid test steps {self.monitor_test_steps} to monitor for {y.shape[1]} rollout steps'
 
-        preds = self.net.forward(inputs, lead_times, in_variables, out_variables)
+        for step in range(rollout_steps):
+            #prepend static variables to input variables
+            inputs = torch.cat((static, x), dim=2).to(dtype)
 
-        #set y and preds to float32 for metric calculations
-        preds = preds.float()
-        y = y.float().squeeze(1)
-        climatology = climatology.float().squeeze(1)
+            dts = delta_times / 100 #divide deltas_times by 100 following climaX 
+            preds = self.net.forward(inputs, dts.to(self.device), in_variables, out_variables)
 
-        self.val_lat_weighted_mse.update(preds, y)
-        self.val_lat_weighted_rmse.update(preds, y)
+            pred_timestamps = current_timestamps + delta_times.numpy().astype('timedelta64[h]')
+            
+            if not self.monitor_val_step or step + 1 == self.monitor_val_step:
+                assert (output_timestamps[:, step] == pred_timestamps).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
 
-        self.val_lat_weighted_acc.update(preds, y, climatology)
+                #set y and preds to float32 for metric calculations
+                preds = preds.float()
+                targets = y[:, step].float().squeeze(1)
+                clim = climatology[:, step].float().squeeze(1)
+                
+                self.val_lat_weighted_mse.update(preds, targets)
+                self.val_lat_weighted_rmse.update(preds, targets)
+
+                self.val_lat_weighted_acc.update(preds, targets, clim)
+
+            x = torch.cat([x[:,1:], preds.unsqueeze(1)], axis=1)
+            current_timestamps = pred_timestamps
         
     def on_validation_epoch_end(self):
         w_mse_norm = self.val_lat_weighted_mse.compute()
