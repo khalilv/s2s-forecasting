@@ -230,39 +230,40 @@ class GlobalForecastModule(LightningModule):
         dtype = x.dtype
 
         rollout_steps = int(lead_times[0][-1] // self.delta_time)
-        batch_loss = {}
+        preds = []
         for step in range(rollout_steps):
             #prepend static variables to input variables
             inputs = torch.cat((static, x), dim=2).to(dtype)
 
             dts = delta_times / 100 #divide deltas_times by 100 following climaX 
-            preds = self.net.forward(inputs, dts.to(self.device), in_variables, out_variables)
+            step_preds = self.net.forward(inputs, dts.to(self.device), in_variables, out_variables)
 
             pred_timestamps = current_timestamps + delta_times.numpy().astype('timedelta64[h]')
             assert (output_timestamps[:, step] == pred_timestamps).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
 
-            #set y and preds to float32 for metric calculations
-            preds = preds.float()
-            targets = y[:, step].float().squeeze(1)
-            
-            step_loss = self.train_lat_weighted_mse(preds, targets)
-            for var in step_loss.keys():
-                if var in batch_loss:
-                    batch_loss[var] += step_loss[var]
-                else:
-                    batch_loss[var] = step_loss[var]
-            
-            self.train_lat_weighted_mse.reset()
-            x = torch.cat([x[:,1:], preds.unsqueeze(1)], axis=1)
+            preds.append(step_preds)
+            x = torch.cat([x[:,1:], step_preds.unsqueeze(1)], axis=1)
             current_timestamps = pred_timestamps
+        
+        #set y and preds to float32 for metric calculations
+        preds = torch.stack(preds, dim=1).float()
+        targets = y.float()
+
+        #flatten batch and step dimensions
+        preds = preds.flatten(0,1)
+        targets = targets.flatten(0,1)
+        
+        batch_loss = self.train_lat_weighted_mse(preds, targets) #retains gradients
        
         for var in batch_loss.keys():
             self.log(
                 "train/" + var,
-                batch_loss[var] / rollout_steps,
+                batch_loss[var],
                 prog_bar=False,
             )
-        return batch_loss['w_mse_norm'] / rollout_steps
+
+        self.train_lat_weighted_mse.reset()
+        return batch_loss['w_mse_norm']
     
     def validation_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
