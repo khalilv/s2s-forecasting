@@ -2,8 +2,7 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/baseline/6hr_finetune/updated_variables
-
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/temporal/7d_1_step_hist_finetune
   precision: 16-mixed
 
   devices: 4
@@ -22,8 +21,9 @@ trainer:
   sync_batchnorm: true
   enable_checkpointing: true
 
-  # accumulate_grad_batches: 4
-  # log_every_n_steps: 10
+  accumulate_grad_batches: 4
+  log_every_n_steps: 12
+  gradient_clip_val: 5.0
 
   # debugging
   fast_dev_run: false
@@ -66,7 +66,7 @@ trainer:
       init_args:
         monitor: "val/w_acc_${model.delta_time}hrs" # name of the logged metric which determines when model is improving
         mode: "max" # "max" means higher metric value is better, can be also "min"
-        patience: 25 # how many validation epochs of not improving until training stops
+        patience: 10 # how many validation epochs of not improving until training stops
         min_delta: 0. # minimum change in the monitored metric needed to qualify as an improvement
 
     - class_path: pytorch_lightning.callbacks.RichModelSummary
@@ -77,16 +77,14 @@ trainer:
 
 # ---------------------------- MODEL -------------------------------------------
 model:
-  delta_time: 6
-  temporal_attention: false
-  reinit_embeddings_and_prediction_head: true
-  history_size: 2
-  lr: 5e-7
+  delta_time: 168
+  temporal_attention: true
+  lr:  5.0e-06
   beta_1: 0.9
   beta_2: 0.999
   weight_decay: 1e-5
-  warmup_steps: 12500
-  max_steps: 125000
+  warmup_steps: 5000
+  max_steps: 50000
   warmup_start_lr: 1e-8
   eta_min: 1e-8
   pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/climaX-5.625-cmip6.ckpt"
@@ -99,8 +97,8 @@ model:
   mlp_ratio: 4
   drop_path: 0.1
   drop_rate: 0.1
-  monitor_test_steps: [1,4,8,12,16,20,24,28,32,36,40]
-
+  monitor_val_step: 1
+  monitor_test_steps: [1,2,3,4,5,6,7,8]
 
 
 # ---------------------------- DATA -------------------------------------------
@@ -165,12 +163,12 @@ data:
   # [history_step * hrs_each_step * h = history timestamp (hrs)] for h in history_size 
   # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
   predict_size: 1
-  predict_step: 1
+  predict_step: 28
   history_size: 1
-  history_step: 1
+  history_step: 28
   hrs_each_step: 6
   max_buffer_size: 1000
-  batch_size: 32
+  batch_size: 8
   mem_load: 1.0
   num_workers: 2
   pin_memory: true
