@@ -199,6 +199,8 @@ class GlobalForecastModule(LightningModule):
             self.test_lat_weighted_rmse[step].to(self.device)
             self.test_rmse_spatial_map[step].to(self.device)
             self.test_acc_spatial_map[step].to(self.device)
+            self.test_time_agg_weights[step].to(self.device)
+            self.test_var_agg_weights[step].to(self.device)
        
     def set_lat2d(self, normalize: bool):
         self.lat2d = torch.from_numpy(np.tile(self.lat, (self.img_size[1], 1)).T).unsqueeze(0) #climaX includes 2d latitude as an input field
