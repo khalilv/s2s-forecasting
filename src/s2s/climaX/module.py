@@ -15,7 +15,8 @@ from s2s.utils.metrics import (
     lat_weighted_mse,
     lat_weighted_rmse,
     acc_spatial_map,
-    rmse_spatial_map
+    rmse_spatial_map,
+    aggregate_attn_weights,
 )
 from s2s.climaX.pos_embed import interpolate_pos_embed
 from s2s.utils.plot import plot_spatial_map_with_basemap
@@ -151,13 +152,15 @@ class GlobalForecastModule(LightningModule):
         self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize, suffix=val_suffix)
         self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize, suffix=val_suffix)
         
-        self.test_lat_weighted_mse, self.test_lat_weighted_rmse, self.test_lat_weighted_acc, self.test_acc_spatial_map, self.test_rmse_spatial_map = {}, {}, {}, {}, {}
+        self.test_lat_weighted_mse, self.test_lat_weighted_rmse, self.test_lat_weighted_acc, self.test_acc_spatial_map, self.test_rmse_spatial_map, self.test_time_agg_weights, self.test_var_agg_weights = {}, {}, {}, {}, {}, {}, {}
         for step in self.monitor_test_steps:
             self.test_lat_weighted_mse[step] = lat_weighted_mse(self.out_variables, self.lat, var_weights, suffix='norm')        
             self.test_rmse_spatial_map[step] = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
             self.test_lat_weighted_rmse[step] = lat_weighted_rmse(self.out_variables, self.lat, denormalize)
             self.test_lat_weighted_acc[step] = lat_weighted_acc(self.out_variables, self.lat, denormalize)
             self.test_acc_spatial_map[step] = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
+            self.test_time_agg_weights[step] = aggregate_attn_weights(self.out_variables, (len(self.lat) // self.patch_size, len(self.lon) // self.patch_size), 1, self.history_size, suffix='time')
+            self.test_var_agg_weights[step] = aggregate_attn_weights(['agg'], (len(self.lat) // self.patch_size, len(self.lon) // self.patch_size), 1, len(self.out_variables), suffix='var')
 
     def init_network(self):
         variables = self.static_variables + ["latitude"] + self.in_variables #climaX includes 2d latitude as an input field
@@ -236,7 +239,7 @@ class GlobalForecastModule(LightningModule):
             inputs = torch.cat((static, x), dim=2).to(dtype)
 
             dts = delta_times / 100 #divide deltas_times by 100 following climaX 
-            step_preds = self.net.forward(inputs, dts.to(self.device), in_variables, out_variables)
+            step_preds, _, _ = self.net.forward(inputs, dts.to(self.device), in_variables, out_variables)
 
             pred_timestamps = current_timestamps + delta_times.numpy().astype('timedelta64[h]')
             assert (output_timestamps[:, step] == pred_timestamps).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
@@ -291,7 +294,7 @@ class GlobalForecastModule(LightningModule):
             inputs = torch.cat((static, x), dim=2).to(dtype)
 
             dts = delta_times / 100 #divide deltas_times by 100 following climaX 
-            preds = self.net.forward(inputs, dts.to(self.device), in_variables, out_variables)
+            preds, _, _ = self.net.forward(inputs, dts.to(self.device), in_variables, out_variables)
 
             pred_timestamps = current_timestamps + delta_times.numpy().astype('timedelta64[h]')
             
@@ -351,7 +354,7 @@ class GlobalForecastModule(LightningModule):
             inputs = torch.cat((static, x), dim=2).to(dtype)
 
             dts = delta_times / 100 #divide deltas_times by 100 following climaX 
-            preds = self.net.forward(inputs, dts.to(self.device), in_variables, out_variables)
+            preds, var_agg_weights, time_agg_weights = self.net.forward(inputs, dts.to(self.device), in_variables, out_variables, need_weights=True)
 
             pred_timestamps = current_timestamps + delta_times.numpy().astype('timedelta64[h]')
 
@@ -368,12 +371,16 @@ class GlobalForecastModule(LightningModule):
                 self.test_rmse_spatial_map[step + 1].update(preds, targets)
                 self.test_lat_weighted_acc[step + 1].update(preds, targets, clim)
                 self.test_acc_spatial_map[step + 1].update(preds, targets, clim)
+
+                if self.temporal_attention:
+                    self.test_time_agg_weights[step + 1].update(time_agg_weights)
+                self.test_var_agg_weights[step + 1].update(var_agg_weights.unsqueeze(1))
             
             x = torch.cat([x[:,1:], preds.unsqueeze(1)], axis=1)
             current_timestamps = pred_timestamps
 
     def on_test_epoch_end(self):
-        results_dict = {'lead_time_hrs': []}
+        results_dict = {'lead_time_hrs': [], 'out_variables': self.out_variables}
         for step in self.monitor_test_steps:
             lead_time = int(step*self.delta_time) #current forecast lead time in hours
             results_dict['lead_time_hrs'].append(lead_time)
@@ -383,6 +390,8 @@ class GlobalForecastModule(LightningModule):
             w_acc = self.test_lat_weighted_acc[step].compute()
             rmse_spatial_maps = self.test_rmse_spatial_map[step].compute()
             acc_spatial_maps = self.test_acc_spatial_map[step].compute()
+            var_agg_attn_weights = self.test_var_agg_weights[step].compute()
+            time_attn_weights = self.test_time_agg_weights[step].compute() if self.temporal_attention else {}
 
             #scalar metrics
             loss_dict = {**w_mse_norm, **w_rmse, **w_acc}
@@ -416,11 +425,21 @@ class GlobalForecastModule(LightningModule):
                             else:
                                 plot_spatial_map_with_basemap(data=map, lat=latitudes, lon=longitudes, title=f'{var}_{suffix}', filename=f"{self.logger.log_dir}/test_{var}_{suffix}.png")                
             
+            attn_weights_dict = {**var_agg_attn_weights, **time_attn_weights}
+            del attn_weights_dict['attn_weights_agg_var'] #redundant
+            for var in attn_weights_dict.keys():
+                if var not in results_dict:
+                    results_dict[var] = []  
+                results_dict[var].append(attn_weights_dict[var].float().cpu().numpy())
+
             self.test_lat_weighted_mse[step].reset()
             self.test_lat_weighted_rmse[step].reset()
             self.test_lat_weighted_acc[step].reset()
             self.test_acc_spatial_map[step].reset()
             self.test_rmse_spatial_map[step].reset()
+            self.test_time_agg_weights[step].reset()
+            self.test_var_agg_weights[step].reset()
+
         
         np.savez(f'{self.logger.log_dir}/results.npz', **results_dict)
 

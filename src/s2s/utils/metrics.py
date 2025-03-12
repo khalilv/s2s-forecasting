@@ -378,3 +378,31 @@ class acc_spatial_map(Metric):
         spatial_map_dict[spatial_map_name] = torch.mean(torch.stack(list(spatial_map_dict.values())), dim=(0))
         
         return spatial_map_dict
+
+class aggregate_attn_weights(Metric):
+    def __init__(self, vars, resolution, C_in, C_out, suffix=None, **kwargs):
+        super().__init__(**kwargs)
+
+        self.add_state("attn_weights_sum", default=torch.zeros(len(vars),resolution[0], resolution[1], C_in, C_out), dist_reduce_fx="sum")
+        self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
+
+        self.vars = vars
+        self.suffix = suffix
+
+    def update(self, weights: torch.Tensor):
+        assert len(weights.shape) == 6, f'Expected weight tensor with shape [B, V, H, W, C_in, C_out] but received tensor with shape {weights.shape}'
+
+        self.attn_weights_sum += torch.sum(weights, dim=(0))
+        self.count += weights.shape[0]
+    
+    def compute(self):
+        loss_dict = {}
+
+        for i, var in enumerate(self.vars):
+            var_loss_name = f"attn_weights_{var}_{self.suffix}" if self.suffix else f"attn_weights_{var}"
+            loss_dict[var_loss_name] = self.attn_weights_sum[i] / self.count
+
+        loss_name = f"attn_weights_{self.suffix}" if self.suffix else f"attn_weights"
+        loss_dict[loss_name] = torch.mean(torch.stack(list(loss_dict.values())), dim=0)
+        
+        return loss_dict
