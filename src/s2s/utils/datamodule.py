@@ -26,15 +26,17 @@ class GlobalForecastDataModule(LightningDataModule):
         climatology_test (str): Path to zarr file for test climatology.
         in_variables (list): List of input variables.
         static_variables (list): List of static variables.
-        buffer_size (int): Buffer size for shuffling.
+        max_buffer_size (int): Maximum buffer size for shuffling.
         out_variables (list, optional): List of output variables.
         plot_variables (list, optional): List of variable to plot.
         predict_size (int, optional): Length of outputs. Defaults to 1.
         predict_step (int, optional): Step size between outputs. Defaults to 1.
-        history_size (int, optional): Length of history. Defaults to 1. Set to 0 to include only the current timestamp
-        history_step (int, optional): Step size between history elements. Defaults to 1.
+        history (list, optional): List of history elements to include in input. 
+            If provided must all be negative integers. Defaults to [] (current timestamp).
         hrs_each_step (int, optional): Hours between consecutive steps.
         batch_size (int, optional): Batch size.
+        mem_load (float, optional): Between 0 and 1 inclusive. Percentage of data to load at a time for each worker. 
+            1 = load entire data slice (fastest). 0 = load one sample at a time (lowest memory usage).
         num_workers (int, optional): Number of workers.
         pin_memory (bool, optional): Whether to pin memory.
         normalize_data (bool, optional): Flag to normalize data.
@@ -52,8 +54,7 @@ class GlobalForecastDataModule(LightningDataModule):
         plot_variables = None,
         predict_size: int = 1,
         predict_step: int = 1,
-        history_size: int = 1,
-        history_step: int = 1,
+        history: list = [],
         hrs_each_step: int = 1,
         batch_size: int = 64,
         mem_load: float = 0.0,
@@ -90,8 +91,7 @@ class GlobalForecastDataModule(LightningDataModule):
         self.max_buffer_size = max_buffer_size
         self.predict_size = predict_size
         self.predict_step = predict_step       
-        self.history_size = history_size
-        self.history_step = history_step
+        self.history = history
         self.hrs_each_step = hrs_each_step
         self.batch_size = batch_size
         self.mem_load = mem_load
@@ -124,8 +124,8 @@ class GlobalForecastDataModule(LightningDataModule):
         normalize_std = np.array([statistics[f"{var}_std"] for var in variables])
         return normalize_mean, normalize_std
     
-    def get_history_size_and_step(self):
-        return self.history_size, self.history_step
+    def get_history(self):
+        return self.history
     
     def get_transforms(self, group: str):
         if group == 'in':
@@ -169,8 +169,7 @@ class GlobalForecastDataModule(LightningDataModule):
                         shuffle=True,
                         predict_size=self.predict_size,
                         predict_step=self.predict_step,
-                        history_size=self.history_size,
-                        history_step=self.history_step,
+                        history=self.history,
                         hrs_each_step=self.hrs_each_step,
                     ),
                     normalize_data = self.normalize_data,
@@ -192,8 +191,7 @@ class GlobalForecastDataModule(LightningDataModule):
                     shuffle=False,
                     predict_size=self.predict_size,
                     predict_step=self.predict_step,
-                    history_size=self.history_size,
-                    history_step=self.history_step,
+                    history=self.history,
                     hrs_each_step=self.hrs_each_step,
                 ),
                 normalize_data = self.normalize_data,
@@ -215,8 +213,7 @@ class GlobalForecastDataModule(LightningDataModule):
                     shuffle=False,
                     predict_size=self.predict_size,
                     predict_step=self.predict_step,
-                    history_size=self.history_size,
-                    history_step=self.history_step,
+                    history=self.history,
                     hrs_each_step=self.hrs_each_step,
                 ),
                 normalize_data = self.normalize_data,

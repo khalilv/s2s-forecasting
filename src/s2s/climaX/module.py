@@ -159,7 +159,7 @@ class GlobalForecastModule(LightningModule):
             self.test_lat_weighted_rmse[step] = lat_weighted_rmse(self.out_variables, self.lat, denormalize)
             self.test_lat_weighted_acc[step] = lat_weighted_acc(self.out_variables, self.lat, denormalize)
             self.test_acc_spatial_map[step] = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
-            self.test_time_agg_weights[step] = aggregate_attn_weights(self.out_variables, (len(self.lat) // self.patch_size, len(self.lon) // self.patch_size), 1, self.history_size, suffix='time')
+            self.test_time_agg_weights[step] = aggregate_attn_weights(self.out_variables, (len(self.lat) // self.patch_size, len(self.lon) // self.patch_size), 1, len(self.history), suffix='time')
             self.test_var_agg_weights[step] = aggregate_attn_weights(['agg'], (len(self.lat) // self.patch_size, len(self.lon) // self.patch_size), 1, len(self.out_variables), suffix='var')
 
     def init_network(self):
@@ -174,8 +174,7 @@ class GlobalForecastModule(LightningModule):
                           mlp_ratio=self.mlp_ratio, 
                           drop_path=self.drop_path, 
                           drop_rate=self.drop_rate, 
-                          history_size=self.history_size,
-                          history_step=self.history_step,
+                          history=self.history,
                           temporal_attention=self.temporal_attention)
         if len(self.pretrained_path) > 0:
             self.load_pretrained_weights(self.pretrained_path)
@@ -183,9 +182,8 @@ class GlobalForecastModule(LightningModule):
     def set_denormalization(self, denormalization):
         self.denormalization = denormalization
     
-    def set_history_size_and_step(self, history_size, history_step):
-        self.history_size = history_size + 1 # +1 because the model considers the current timestep as history
-        self.history_step = history_step
+    def set_history(self, history: list):
+        self.history = history + [0] # + [0] because the model considers the current timestamp as history
       
     def set_lat_lon(self, lat, lon):
         self.lat = lat

@@ -23,7 +23,7 @@ def main():
 
     cli.model.set_lat_lon(*cli.datamodule.get_lat_lon())
     cli.model.set_lat2d(cli.datamodule.normalize_data)
-    cli.model.set_history_size_and_step(*cli.datamodule.get_history_size_and_step())
+    cli.model.set_history(cli.datamodule.get_history())
     cli.model.set_variables(cli.datamodule.in_variables, cli.datamodule.static_variables, cli.datamodule.out_variables)
     cli.model.set_plot_variables(cli.datamodule.plot_variables)
     if cli.datamodule.normalize_data:

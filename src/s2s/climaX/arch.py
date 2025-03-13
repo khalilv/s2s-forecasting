@@ -30,6 +30,8 @@ class ClimaX(nn.Module):
         mlp_ratio (float): ratio of mlp hidden dimension to embedding dimension
         drop_path (float): stochastic depth rate
         drop_rate (float): dropout rate
+        history (list): history steps to include in input
+        temporal_attention (bool): if true, perform multiheaded attention to aggregate time
     """
 
     def __init__(
@@ -44,8 +46,7 @@ class ClimaX(nn.Module):
         mlp_ratio=4.0,
         drop_path=0.1,
         drop_rate=0.1,
-        history_size=2,
-        history_step=1,
+        history=[],
         temporal_attention=False
     ):
         super().__init__()
@@ -53,14 +54,13 @@ class ClimaX(nn.Module):
         self.img_size = img_size
         self.patch_size = patch_size
         self.in_vars = in_vars
-        self.history_size = history_size
-        self.history_step = history_step
+        self.history = history
         self.temporal_attention = temporal_attention
 
         # variable tokenization: separate embedding layer for each input variable
 
         self.token_embeds = nn.ModuleList(
-            [PatchEmbed(img_size, patch_size, 1 if temporal_attention else history_size, embed_dim) for i in range(len(in_vars))]
+            [PatchEmbed(img_size, patch_size, 1 if temporal_attention else len(history), embed_dim) for i in range(len(in_vars))]
         )
         self.num_patches = self.token_embeds[0].num_patches
 
@@ -80,7 +80,7 @@ class ClimaX(nn.Module):
 
         if temporal_attention:
             # time embedding to denote which timestep each token belongs to
-            self.time_embed = nn.Parameter(torch.zeros(1, history_size, embed_dim))
+            self.time_embed = nn.Parameter(torch.zeros(1, len(history), embed_dim))
             # time aggregation: a learnable query and a single-layer cross attention
             self.time_queries = nn.ParameterList(
                 [nn.Parameter(torch.zeros(1,1,embed_dim)) for i in range(len(in_vars))]
@@ -136,8 +136,7 @@ class ClimaX(nn.Module):
         self.var_embed.data.copy_(torch.from_numpy(var_embed).float().unsqueeze(0))
 
         if self.temporal_attention:
-            timesteps = np.arange(self.history_size)[::-1] * -self.history_step
-            time_embed = get_1d_sincos_pos_embed_from_grid(self.time_embed.shape[-1], timesteps, scale=1000)
+            time_embed = get_1d_sincos_pos_embed_from_grid(self.time_embed.shape[-1], np.array(self.history), scale=1000)
             self.time_embed.data.copy_(torch.from_numpy(time_embed).float().unsqueeze(0))
 
             #start with large initial weight on last timestep for time aggregation 

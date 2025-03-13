@@ -19,8 +19,8 @@ class ZarrReader(IterableDataset):
         climatology_file (str): Filepath to climatology (optional)
         predict_size (int, optional): Length of outputs. Defaults to 1.
         predict_step (int, optional): Step size between outputs. Defaults to 1.
-        history_size (int, optional): Length of history. Defaults to 1. Set to 0 to include only the current timestamp
-        history_step (int, optional): Step size between history elements. Defaults to 1.
+        history (list, optional): List of history elements to include in input. 
+            If provided must all be negative integers. Defaults to [] (current timestamp).
         hrs_each_step (int, optional): Hours between consecutive steps. Defaults to 1.
         shuffle (bool, optional): Whether to shuffle the file list. Defaults to False.
     """
@@ -34,8 +34,7 @@ class ZarrReader(IterableDataset):
         climatology_file: str = None,
         predict_size: int = 1,
         predict_step: int = 1,  
-        history_size: int = 1,
-        history_step: int = 1,
+        history: list = [],
         hrs_each_step: int = 1,
         shuffle: bool = False,
     ) -> None:
@@ -49,13 +48,12 @@ class ZarrReader(IterableDataset):
         self.shuffle = shuffle
         self.predict_size = predict_size
         self.predict_step = predict_step
-        self.history_size = history_size
-        self.history_step = history_step
+        self.history = history
         self.hrs_each_step = hrs_each_step
-        self.history_range = self.history_size * self.history_step 
         self.predict_range = self.predict_size * self.predict_step
-        if self.history_size > 0:
-            assert self.history_step > 0, "History step must be greater than 0 when including history"
+        if self.history:
+            assert all(h < 0 and isinstance(h, int) for h in self.history), "All history elements must be negative integers"
+        self.history_range = min(self.history) * -1 if self.history else 0
         if self.predict_size > 0:
             assert self.predict_step > 0, "Predict step must be greater than 0 when forecasting"
         self.years = sorted(set(f.split("/")[-1].split("_")[0] for f in self.file_list))
@@ -63,19 +61,23 @@ class ZarrReader(IterableDataset):
     def __iter__(self):
         static_data = xr.open_zarr(self.static_variable_file, chunks='auto')
         climatology_data = xr.open_zarr(self.climatology_file, chunks='auto') if self.climatology_file else None
+        nyears = ((self.predict_range + self.history_range) * self.hrs_each_step // 8760) + 1
         if self.shuffle:
+            groups = [self.years[i:i + nyears] for i in range(len(self.years)- nyears + 1)]
             generator = torch.Generator()
-            indices = torch.randperm(len(self.years), generator=generator).tolist()
-            self.years = [self.years[i] for i in indices]
-
+            indices = torch.randperm(len(groups), generator=generator).tolist()
+            groups = [groups[i] for i in indices]
+        else:
+            groups = [self.years[i:i + nyears] for i in range(0, len(self.years), nyears)]
+            
         #carry_over_data prevents needlessly throwing out data samples. 
         #it will only be used if files have temporal ordering (i.e. shuffle=false)
-        yearly_carry_over_data = None 
-        for year in self.years:
-            year_files = sorted([f for f in self.file_list if f.split('/')[-1].startswith(f"{year}_")])
-    
-            yearly_data = xr.open_mfdataset(
-                year_files,
+        carry_over_data = None 
+        for group in groups:
+            files = sorted([f for f in self.file_list if any(f.split('/')[-1].startswith(f"{year}_") for year in group)])
+
+            data = xr.open_mfdataset(
+                files,
                 engine="zarr",
                 concat_dim="time",  
                 combine="nested",    
@@ -83,13 +85,13 @@ class ZarrReader(IterableDataset):
                 chunks='auto'
             )
 
-            if yearly_carry_over_data is not None and not self.shuffle:
-                yearly_data = xr.concat([yearly_carry_over_data, yearly_data], dim="time")
+            if carry_over_data is not None and not self.shuffle:
+                data = xr.concat([carry_over_data, data], dim="time")
             
-            assert len(yearly_data.time) > (self.predict_range + self.history_range), f"Yearly data with size {len(yearly_data.time)} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}"
+            assert len(data.time) > (self.predict_range + self.history_range), f"Data slice with size {len(data.time)} is not large enough for history timestamps {self.history} and a prediction size of {self.predict_size} with step {self.predict_step}"
 
             if not self.shuffle and (self.predict_range + self.history_range > 0):
-                yearly_carry_over_data = yearly_data.isel(time=slice(-(self.predict_range + self.history_range),None))
+                carry_over_data = data.isel(time=slice(-(self.predict_range + self.history_range),None))
 
             if not torch.distributed.is_initialized():
                 global_rank = 0
@@ -99,12 +101,11 @@ class ZarrReader(IterableDataset):
                 world_size = torch.distributed.get_world_size()
             
             # split data across ranks. each rank will get an identical slice to avoid synchronization issues. if data cannot be split evenly, remainder will be discarded 
-            timesteps_per_rank = (len(yearly_data.time) + ((world_size - 1)*(self.predict_range + self.history_range))) // world_size
-            assert timesteps_per_rank > (self.predict_range + self.history_range), f"Data per rank with size {timesteps_per_rank} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}. Decrease devices."
+            timesteps_per_rank = (len(data.time) + ((world_size - 1)*(self.predict_range + self.history_range))) // world_size
+            assert timesteps_per_rank > (self.predict_range + self.history_range), f"Data per rank with size {timesteps_per_rank} is not large enough for history timestamps {self.history} and a prediction size of {self.predict_size} with step {self.predict_step}. Decrease devices."
             rank_start_idx = global_rank * (timesteps_per_rank - (self.predict_range + self.history_range))
             rank_end_idx = rank_start_idx + timesteps_per_rank
-            data_per_rank = yearly_data.isel(time=slice(rank_start_idx, rank_end_idx))
-
+            data_per_rank = data.isel(time=slice(rank_start_idx, rank_end_idx))
 
             #within each rank split data across workers
             worker_info = torch.utils.data.get_worker_info()
@@ -117,7 +118,7 @@ class ZarrReader(IterableDataset):
 
             # split data across workers. each worker will get an identical slice to avoid synchronization issues. if data cannot be split evenly, remainder will be discarded 
             timesteps_per_worker = (len(data_per_rank.time) + ((num_workers - 1)*(self.predict_range + self.history_range))) // num_workers
-            assert timesteps_per_worker > (self.predict_range + self.history_range), f"Data per worker with size {timesteps_per_worker} is not large enough for a history size of {self.history_size} with step {self.history_step} and a prediction size of {self.predict_size} with step {self.predict_step}. Decrease num_workers."
+            assert timesteps_per_worker > (self.predict_range + self.history_range), f"Data per worker with size {timesteps_per_worker} is not large enough for history timestamps {self.history} and a prediction size of {self.predict_size} with step {self.predict_step}. Decrease num_workers."
             worker_start_idx = worker_id * (timesteps_per_worker - (self.predict_range + self.history_range))
             worker_end_idx = worker_start_idx + timesteps_per_worker
             data_per_worker = data_per_rank.isel(time=slice(worker_start_idx, worker_end_idx))
@@ -125,8 +126,8 @@ class ZarrReader(IterableDataset):
             if climatology_data is not None:
                 assert (data_per_worker.latitude.values == climatology_data.latitude.values).all(), f'Mismatch found between climatology latitudes [{climatology_data.latitude.values[0]},...{climatology_data.latitude.values[-1]}] and data latitudes [{data_per_worker.latitude.values[0]},...{data_per_worker.latitude.values[-1]}]. This will cause the wrong climatology values to be used when calculating ACC'
             
-            print(f'Info: Year {year}. Rank: {global_rank + 1}/{world_size} gets {rank_start_idx} to {rank_end_idx}. Worker {worker_id + 1}/{num_workers} in rank {global_rank + 1} gets {worker_start_idx} to {worker_end_idx}')
-            yield data_per_worker, static_data, climatology_data, self.in_variables, self.static_variables, self.out_variables, self.predict_range, self.predict_step, self.history_range, self.history_step, self.hrs_each_step, worker_id
+            print(f'Info: Processing {group}. Rank: {global_rank + 1}/{world_size} gets {rank_start_idx} to {rank_end_idx}. Worker {worker_id + 1}/{num_workers} in rank {global_rank + 1} gets {worker_start_idx} to {worker_end_idx}')
+            yield data_per_worker, static_data, climatology_data, self.in_variables, self.static_variables, self.out_variables, self.predict_range, self.predict_step, self.history, self.history_range, self.hrs_each_step, worker_id
 
 
 class Forecast(IterableDataset):
@@ -151,7 +152,7 @@ class Forecast(IterableDataset):
             raise NotImplementedError("Regional forecast is not supported yet.")
         
     def __iter__(self):
-        for data, static_data, climatology_data, in_variables, static_variables, out_variables, predict_range, predict_step, history_range, history_step, hrs_each_step, worker_id in self.dataset:
+        for data, static_data, climatology_data, in_variables, static_variables, out_variables, predict_range, predict_step, history, history_range, hrs_each_step, worker_id in self.dataset:
             static = static_data[static_variables].to_array().transpose('variable','latitude','longitude').load()
             static = torch.tensor(static.values)
             if self.mem_load == 0:
@@ -169,7 +170,7 @@ class Forecast(IterableDataset):
                 data_shard = data.isel(time=slice(shard_start, shard_end))
                 if carry_over_data is not None:
                     data_shard = xr.concat([carry_over_data, data_shard], dim="time")
-                assert len(data_shard.time) > (predict_range + history_range), f"Data shard with size {len(data_shard.time)} is not large enough for a history size of {history_range // history_step} with step {history_step} and a prediction size of {predict_range // predict_step} with step {predict_step}"
+                assert len(data_shard.time) > (predict_range + history_range), f"Data shard with size {len(data_shard.time)} is not large enough for is not large enough for history timestamps {self.history} and a prediction size of {predict_range // predict_step} with step {predict_step}"
                 
                 if climatology_data is not None:
                     doys = np.array([(np.datetime64(ts, 'D') - np.datetime64(f"{ts.astype('datetime64[Y]')}-01-01", 'D')).astype(int) + 1 for ts in data_shard['time'].values])
@@ -181,7 +182,7 @@ class Forecast(IterableDataset):
             
                 data_shard = data_shard.load()
                 for t in range(history_range, len(data_shard.time) - predict_range):
-                    x = data_shard[in_variables].isel(time=slice(t-history_range,t+1,history_step if history_range > 0 else 1)).to_array().transpose('time', 'variable', 'latitude', 'longitude')               
+                    x = data_shard[in_variables].isel(time=[t + h for h in history + [0]]).to_array().transpose('time', 'variable', 'latitude', 'longitude')               
                     input = torch.tensor(x.values)
                     input_timestamps = np.array(x['time'].values)
                     if predict_range == 0:
