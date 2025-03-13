@@ -4,39 +4,122 @@ from mpl_toolkits.basemap import Basemap
 import matplotlib.colors as colors
 import matplotlib.patches as patches
 
-def plot_aggregated_variable(npz_files: list, labels: list, variable: str, x_key: str, x_label: str = None, y_label: str = None, title: str = None, output_filename: str = None):
-    """Plot variable from multiple npz files with corresponding labels.
+def plot_aggregated_variables(npz_files: list, labels: list, variables: list, x_key: str, x_label: str = None, y_label: str = None, titles: list = None, output_filename: str = None, clim_filename = None):
+    """Plot multiple variables from multiple npz files with corresponding labels.
     
     Args:
         npz_files (list): List of paths to npz files
         labels (list): List of labels corresponding to each npz file
-        variable (str): Name of variable to plot
+        variables (list): List of variable names to plot
         x_key (str): Key for x-axis values in npz files
         x_label (str, optional): Label for x-axis. If None, uses x_key
-        y_label (str, optional): Label for y-axis. If None, uses variable name
-        title (str, optional): Plot title. If None, generates default title
+        y_label (str, optional): Label for y-axis. If None, uses variable names
+        titles (list, optional): List of plot titles. If None, generates default titles
         output_filename (str, optional): Absolute filename to save the plot as PNG
+        clim_filename (str, optional): If provided include climatology errors on plots
+
     """
     assert len(npz_files) == len(labels), "Error: number of files and labels must match"
+    assert len(variables) <= 8, "Error: maximum number of variables is 8"
     
-    plt.figure(figsize=(10, 6))
+    # Define subplot layout based on number of variables
+    layout_map = {
+        1: (1, 1),
+        2: (1, 2),
+        3: (1, 3),
+        4: (2, 2),
+        5: (2, 3),
+        6: (3, 3),
+        7: (3, 4),
+        8: (4, 4)
+    }
+    
+    nrows, ncols = layout_map[len(variables)]
+    fig = plt.figure(figsize=(8*ncols, 6*nrows))
+    
+    # Generate colors for each npz file that will be consistent across subplots
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(npz_files)))
 
-    for npz_file, label in zip(npz_files, labels):
-        data = np.load(npz_file)
+    if clim_filename:
+        clim = np.load(clim_filename)
+    
+    for idx, variable in enumerate(variables):
+        ax = plt.subplot(nrows, ncols, idx + 1)
         
+        for file_idx, (npz_file, label) in enumerate(zip(npz_files, labels)):
+            data = np.load(npz_file)
+            
+            assert variable in data, f"Error: variable {variable} not found in {npz_file}"
+            assert x_key in data, f"Error: x-axis key {x_key} not found in {npz_file}"
+            assert len(data[variable].shape) == 1, f'Error: variable {variable} with shape {data[variable].shape} must be 1 dimensional'
+            assert len(data[x_key].shape) == 1, f'Error: x-axis key {x_key} with shape {data[x_key].shape} must be 1 dimensional'
+            
+            ax.plot(data[x_key], data[variable], label=label, marker='.', color=colors[file_idx])
+
+        if clim_filename and variable in clim:
+            ax.axhline(y=clim[variable], color='black', linestyle='--', label='Climatology')
+
+        ax.set_xlabel(x_label if x_label else x_key)
+        ax.set_ylabel(y_label if y_label else variable)
+        ax.set_title(titles[idx] if titles else f'{y_label if y_label else variable} vs {x_label if x_label else x_key}')
+        ax.grid(True)
+        ax.legend()
+    
+    plt.tight_layout(h_pad=2.0)  # Increase vertical spacing between rows
+        
+    if output_filename:
+        plt.savefig(output_filename, dpi=300, bbox_inches='tight')
+        plt.close()
+    else:
+        plt.show()
+    
+def plot_attn_weights(npz_file: str, labels: list, variables: list, title: str, x_ticks: list, output_filename: str = None):
+    """Plot attention weights for multiple variables across history timesteps.
+
+    Args:
+        npz_file (str): Path to .npz file containing attention weights
+        labels (list): List of labels for each variable in the plot legend
+        variables (list): List of variable names to plot attention weights for
+        title (str): Title for the plot
+        x_ticks (list): List of x-axis tick labels showing history timesteps
+        output_filename (str, optional): If provided, save plot to this file. Defaults to None.
+    """
+    data = np.load(npz_file)
+    history_attn_weights_mean = []
+    history_attn_weights_std = []
+    for i, variable in enumerate(variables):
         assert variable in data, f"Error: variable {variable} not found in {npz_file}"
-        assert x_key in data, f"Error: x-axis key {x_key} not found in {npz_file}"
-        assert len(data[variable].shape) == 1, f'Error: variable {variable} with shape {data[variable].shape} must be 1 dimensional'
-        assert len(data[x_key].shape) == 1, f'Error: x-axis key {x_key} with shape {data[x_key].shape} must be 1 dimensional'
-        
-        plt.plot(data[x_key], data[variable], label=label, marker='o')
-        
-    plt.xlabel(x_label if x_label else x_key)
-    plt.ylabel(y_label if y_label else variable)
-    plt.title(title if title else f'{y_label if y_label else variable} vs {x_label if x_label else x_key}')
-    plt.grid(True)
-    plt.legend()
-        
+        attn_weights = data[variable]
+        attn_weights_mean = attn_weights.mean(axis=(0,1,2,3))
+        attn_weights_std = attn_weights.std(axis=(0,1,2,3))
+        for t in range(len(attn_weights_mean)):
+            if i == 0:
+                history_attn_weights_mean.append([attn_weights_mean[t]])
+                history_attn_weights_std.append([attn_weights_std[t]])
+            else:
+                history_attn_weights_mean[t].append(attn_weights_mean[t])
+                history_attn_weights_std[t].append(attn_weights_std[t])
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    x = np.arange(len(history_attn_weights_mean)) 
+    width = 0.8 / len(variables) 
+    
+    for i in range(len(variables)):
+        values = [weights[i] for weights in history_attn_weights_mean]
+        yerr = [weights[i] for weights in history_attn_weights_std]
+        x_pos = x - 0.4 + (i + 0.5) * width
+        ax.bar(x_pos, values, width, label=labels[i], yerr=yerr, ecolor='black', capsize=3)
+    
+    ax.set_xlabel('History (hrs)')
+    ax.set_ylabel('Weight')
+    ax.set_title(title)
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_ticks)
+    ax.legend()
+    
+    plt.tight_layout()
+    
     if output_filename:
         plt.savefig(output_filename, dpi=300, bbox_inches='tight')
         plt.close()
