@@ -139,16 +139,6 @@ class ClimaX(nn.Module):
             time_embed = get_1d_sincos_pos_embed_from_grid(self.time_embed.shape[-1], np.array(self.history), scale=1000)
             self.time_embed.data.copy_(torch.from_numpy(time_embed).float().unsqueeze(0))
 
-            #start with large initial weight on last timestep for time aggregation 
-            for i in range(len(self.in_vars)):
-                self.time_queries[i].data.copy_(self.time_embed.data[:, -1:])
-                
-            embed_dim = self.time_agg.embed_dim
-            self.time_agg.in_proj_weight[embed_dim:2*embed_dim].data.copy_(torch.eye(embed_dim))
-            self.time_agg.in_proj_bias[embed_dim:2*embed_dim].data.zero_()
-            self.time_agg.in_proj_weight[:embed_dim].data.copy_(torch.eye(embed_dim))
-            self.time_agg.in_proj_bias[:embed_dim].data.zero_()
-
         # initialize nn.Linear and nn.LayerNorm
         self.apply(self._init_weights)
 
