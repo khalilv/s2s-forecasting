@@ -403,6 +403,6 @@ class aggregate_attn_weights(Metric):
             loss_dict[var_loss_name] = self.attn_weights_sum[i] / self.count
 
         loss_name = f"attn_weights_{self.suffix}" if self.suffix else f"attn_weights"
-        loss_dict[loss_name] = torch.mean(torch.stack(list(loss_dict.values())), dim=0)
+        loss_dict[loss_name] = self.attn_weights_sum / self.count
         
         return loss_dict
