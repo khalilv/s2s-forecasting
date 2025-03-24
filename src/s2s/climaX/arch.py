@@ -337,6 +337,7 @@ class ClimaX(nn.Module):
         if need_weights:
             hp, wp = int(self.img_size[0] / self.patch_size), int(self.img_size[1] / self.patch_size)
             var_agg_weights = var_agg_weights.unflatten(dim=1, sizes=(hp, wp))[:, :, :, :, out_var_ids] # B, H/p, W/p, 1, Vo
-            time_agg_weights = time_agg_weights.unflatten(dim=2, sizes=(hp, wp))[:, out_var_ids] # B, Vo, H/p, W/p, 1, T
+            if time_agg_weights:
+                time_agg_weights = time_agg_weights.unflatten(dim=2, sizes=(hp, wp))[:, out_var_ids] # B, Vo, H/p, W/p, 1, T
 
         return x, var_agg_weights, time_agg_weights

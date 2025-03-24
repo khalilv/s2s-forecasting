@@ -184,6 +184,7 @@ class GlobalForecastModule(LightningModule):
     
     def set_history(self, history: list):
         self.history = history + [0] # + [0] because the model considers the current timestamp as history
+        # self.history = history[::8] + [0] # + [0] because the model considers the current timestamp as history
       
     def set_lat_lon(self, lat, lon):
         self.lat = lat
@@ -227,15 +228,20 @@ class GlobalForecastModule(LightningModule):
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
         static = torch.cat((static,lat2d_expanded), dim=1)
         static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
+        # static = static.unsqueeze(1).expand(-1, len(self.history), -1, -1, -1) 
         current_timestamps = input_timestamps[:, -1]
         in_variables = static_variables + ["latitude"] + variables
         delta_times = torch.zeros(x.shape[0]) + self.delta_time 
         dtype = x.dtype
 
         rollout_steps = int(lead_times[0][-1] // self.delta_time)
+
         preds = []
+        # x_latest = x[:, -1:]
         for step in range(rollout_steps):
+            # x_hist = torch.cat((x[:, step:-1:rollout_steps], x_latest), dim=1)
             #prepend static variables to input variables
+            # inputs = torch.cat((static, x_hist), dim=2).to(dtype)
             inputs = torch.cat((static, x), dim=2).to(dtype)
 
             dts = delta_times / 100 #divide deltas_times by 100 following climaX 
@@ -245,6 +251,7 @@ class GlobalForecastModule(LightningModule):
             assert (output_timestamps[:, step] == pred_timestamps).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
 
             preds.append(step_preds)
+            # x_latest = step_preds.unsqueeze(1)
             x = torch.cat([x[:,1:], step_preds.unsqueeze(1)], axis=1)
             current_timestamps = pred_timestamps
         
@@ -280,6 +287,7 @@ class GlobalForecastModule(LightningModule):
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
         static = torch.cat((static,lat2d_expanded), dim=1)
         static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
+        # static = static.unsqueeze(1).expand(-1, len(self.history), -1, -1, -1) 
         current_timestamps = input_timestamps[:, -1]
         in_variables = static_variables + ["latitude"] + variables
         delta_times = torch.zeros(x.shape[0]) + self.delta_time 
@@ -289,8 +297,12 @@ class GlobalForecastModule(LightningModule):
         if self.monitor_val_step:
             assert self.monitor_val_step - 1 <= y.shape[1], f'Invalid test steps {self.monitor_test_steps} to monitor for {y.shape[1]} rollout steps'
 
+        # x_latest = x[:, -1:]
         for step in range(rollout_steps):
+            # x_hist = torch.cat((x[:, step:-1:rollout_steps], x_latest), dim=1)
+
             #prepend static variables to input variables
+            # inputs = torch.cat((static, x_hist), dim=2).to(dtype)
             inputs = torch.cat((static, x), dim=2).to(dtype)
 
             dts = delta_times / 100 #divide deltas_times by 100 following climaX 
@@ -311,6 +323,7 @@ class GlobalForecastModule(LightningModule):
 
                 self.val_lat_weighted_acc.update(preds, targets, clim)
 
+            # x_latest = preds.unsqueeze(1)
             x = torch.cat([x[:,1:], preds.unsqueeze(1)], axis=1)
             current_timestamps = pred_timestamps
         
@@ -342,6 +355,7 @@ class GlobalForecastModule(LightningModule):
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
         static = torch.cat((static,lat2d_expanded), dim=1)
         static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1)
+        # static = static.unsqueeze(1).expand(-1, len(self.history), -1, -1, -1)
         current_timestamps = input_timestamps[:, -1]
         in_variables = static_variables + ["latitude"] + variables
         delta_times = torch.zeros(x.shape[0]) + self.delta_time 
@@ -349,8 +363,13 @@ class GlobalForecastModule(LightningModule):
         
         rollout_steps = int(lead_times[0][-1] // self.delta_time)
         assert max(self.monitor_test_steps) - 1 <= y.shape[1], f'Invalid test steps {self.monitor_test_steps} to monitor for {y.shape[1]} rollout steps'
+                
+        # x_latest = x[:, -1:]
         for step in range(rollout_steps):
+            # x_hist = torch.cat((x[:, step:-1:rollout_steps], x_latest), dim=1)
+
             #prepend static variables to input variables
+            # inputs = torch.cat((static, x_hist), dim=2).to(dtype)
             inputs = torch.cat((static, x), dim=2).to(dtype)
 
             dts = delta_times / 100 #divide deltas_times by 100 following climaX 
@@ -376,6 +395,7 @@ class GlobalForecastModule(LightningModule):
                     self.test_time_agg_weights[step + 1].update(time_agg_weights)
                 self.test_var_agg_weights[step + 1].update(var_agg_weights.unsqueeze(1))
             
+            # x_latest = preds.unsqueeze(1)
             x = torch.cat([x[:,1:], preds.unsqueeze(1)], axis=1)
             current_timestamps = pred_timestamps
 
