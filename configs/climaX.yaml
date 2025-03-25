@@ -160,12 +160,10 @@ data:
   plot_variables: [
       # "2m_temperature",
   ]
-  # [history_step * hrs_each_step * h = history timestamp (hrs)] for h in history_size 
   # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
   predict_size: 1
   predict_step: 28
-  history_size: 1
-  history_step: 28
+  history: [-28]
   hrs_each_step: 6
   max_buffer_size: 1000
   batch_size: 8
