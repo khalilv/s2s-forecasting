@@ -31,6 +31,7 @@ class ClimaX(nn.Module):
         drop_path (float): stochastic depth rate
         drop_rate (float): dropout rate
         history (list): history steps to include in input
+        hrs_each_step: number of hours between each step
         temporal_attention (bool): if true, perform multiheaded attention to aggregate time
     """
 
@@ -47,6 +48,7 @@ class ClimaX(nn.Module):
         drop_path=0.1,
         drop_rate=0.1,
         history=[],
+        hrs_each_step=6,
         temporal_attention=False
     ):
         super().__init__()
@@ -56,6 +58,7 @@ class ClimaX(nn.Module):
         self.in_vars = in_vars
         self.history = history
         self.temporal_attention = temporal_attention
+        self.hrs_each_step = hrs_each_step
 
         # variable tokenization: separate embedding layer for each input variable
 
@@ -71,7 +74,7 @@ class ClimaX(nn.Module):
             self.var_map[var] = i
         
         # variable aggregation: a learnable query and a single-layer cross attention
-        self.var_query = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.var_query = nn.Parameter(torch.zeros(self.num_patches, 1, embed_dim))
         self.var_agg = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
 
         # positional embedding and lead time embedding
@@ -82,9 +85,7 @@ class ClimaX(nn.Module):
             # time embedding to denote which timestep each token belongs to
             self.time_embed = nn.Parameter(torch.zeros(1, len(history), embed_dim))
             # time aggregation: a learnable query and a single-layer cross attention
-            self.time_queries = nn.ParameterList(
-                [nn.Parameter(torch.zeros(1,1,embed_dim)) for i in range(len(in_vars))]
-            )
+            self.time_query = nn.Parameter(torch.zeros(self.num_patches, 1, embed_dim))
             self.time_agg = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
 
         # --------------------------------------------------------------------------
@@ -136,7 +137,7 @@ class ClimaX(nn.Module):
         self.var_embed.data.copy_(torch.from_numpy(var_embed).float().unsqueeze(0))
 
         if self.temporal_attention:
-            time_embed = get_1d_sincos_pos_embed_from_grid(self.time_embed.shape[-1], np.array(self.history), scale=1000)
+            time_embed = get_1d_sincos_pos_embed_from_grid(self.time_embed.shape[-1], np.array(self.history), scale=10000)
             self.time_embed.data.copy_(torch.from_numpy(time_embed).float().unsqueeze(0))
 
         # initialize nn.Linear and nn.LayerNorm
@@ -184,7 +185,7 @@ class ClimaX(nn.Module):
             x (torch.Tensor): Tensor of shape `(B, C_in, L, D)` where `C_in` refers to the number
                 of input channels.
             aggregator (nn.MultiheadAttention): nn.MultiheadAttention module to perform the aggregation
-            query (torch.Tensor): Tensor of shape `(1, C_out, D)` where `C_out` refers to the number
+            query (torch.Tensor): Tensor of shape `(L, C_out, D)` where `C_out` refers to the number
                 of aggregated channels.
             need_weights (bool): If true, attention weights with shape (B, L, C_out, C_in) will be returned 
                 alongside output tensor
@@ -196,12 +197,15 @@ class ClimaX(nn.Module):
         """
         b, _, l, _ = x.shape
         x = torch.einsum("bvld->blvd", x)
-        x = x.flatten(0, 1)  # BxL, V, D
+        x = x.flatten(0, 1)  # (BxL, C_in, D)
 
         #perform the aggregation using multi-headed attention
-        q = query.repeat_interleave(x.shape[0], dim=0)
+        q = query.unsqueeze(0) # (1, L, C_out, D)
+        q = q.expand(b, -1, -1, -1) # (B, L, C_out, D)
+        q = q.flatten(0, 1) # (B*L, C_out, D)
+
         x, attn_weights = aggregator(q, x, x, need_weights=need_weights)
-        x = x.unflatten(dim=0, sizes=(b, l))  # B, L, C_out, D
+        x = x.unflatten(dim=0, sizes=(b, l))  # (B, L, C_out, D)
         x = torch.einsum("blcd->bcld", x)  # (B, C_out, L, D)
         
         if need_weights:
@@ -216,19 +220,13 @@ class ClimaX(nn.Module):
             x (torch.Tensor): `[B, T, V, H, W]` shape. Input weather state
             lead_times: `[B]` shape. Forecasting lead times for each element of the batch.
             in_variables: `[V]` shape. Names of input variables.
-            need_weights (bool): If true, attention weights for variable aggregation and time aggregation 
+            need_weights (bool): If true, attention weights for variable aggregation
                 will be computed and returned alongside output tensor
         Returns:
             x (torch.Tensor): `[B, L, D]` shape. Encoded weather state
             var_agg_weights (torch.Tensor): `[B, L, 1, V]` shape. Attention weights for variable aggregation if 
                 need_weights is True. Otherwise None
-            time_agg_weights (torch.Tensor): `[B, V, L, 1, T]` shape. Attention weights for time aggregation if 
-                need_weights is True and temporal attention was used. Otherwise None
-        """
-        B, T, V, _, _ = x.shape
-
-        time_agg_weights = None
-        
+        """        
         if isinstance(in_variables, list):
             in_variables = tuple(in_variables)
 
@@ -243,73 +241,81 @@ class ClimaX(nn.Module):
             for i in range(len(var_ids)):
                 id = var_ids[i]
                 embeds.append(self.token_embeds[id](x[:, i : i + 1]))
-            x = torch.stack(embeds, dim=1)  # B*T, V, L, D
-            x = x.unflatten(0, (B, T))  # (B, T, V, L, D)
-
-            x = x + self.time_embed[:, :T].unsqueeze(2).unsqueeze(3)
-            x = torch.einsum("btvld->bvtld", x)  # (B, V, T, L, D)            
-            x_agg = []
-            if need_weights:
-                time_agg_weights = []
-            for i in range(len(var_ids)):
-                id = var_ids[i]
-                out, attn_weights = self.aggregate(x[:,i], self.time_agg, self.time_queries[id], need_weights=need_weights)
-                x_agg.append(out.squeeze(1))  # B, L, D
-                if need_weights:
-                    time_agg_weights.append(attn_weights) #B, L, 1, T
-            if need_weights:
-                time_agg_weights = torch.stack(time_agg_weights, dim=1) #B, V, L, 1, T
-            x = torch.stack(x_agg, dim=1)  # B, V, L, D
+            x = torch.stack(embeds, dim=1)  # (B*T, V, L, D)
         else:
             x = torch.einsum("btvhw->bvthw", x)  # (B, V, T, H, W)
             for i in range(len(var_ids)):
                 id = var_ids[i]
                 embeds.append(self.token_embeds[id](x[:, i]))
-            x = torch.stack(embeds, dim=1)  # B, V, L, D
+            x = torch.stack(embeds, dim=1)  # (B, V, L, D)
+
+        ##############################################
+        #let B' = B*T if self.temporal_attention else B
+        ##############################################
 
         # add variable embedding
         var_embed = self.get_var_emb(self.var_embed, in_variables)
-        x = x + var_embed.unsqueeze(2)  # B, V, L, D
+        x = x + var_embed.unsqueeze(2)  # (B', V, L, D) or 
 
         # variable aggregation
-        x, var_agg_weights = self.aggregate(x, self.var_agg, self.var_query, need_weights=need_weights)  # B, 1, L, D
+        x, var_agg_weights = self.aggregate(x, self.var_agg, self.var_query, need_weights=need_weights)  # (B', 1, L, D)
         x = x.squeeze(1)
 
         # add pos embedding
         x = x + self.pos_embed
 
         # add lead time embedding
-        lead_time_emb = self.lead_time_embed(lead_times.unsqueeze(-1))  # B, D
+        if self.temporal_attention:
+            dts = torch.tensor(self.history).to(lead_times.device) * -self.hrs_each_step/100
+            lead_times = lead_times[:, None] + dts[None, :]
+            lead_times = lead_times.flatten(0, 1)
+
+        lead_time_emb = self.lead_time_embed(lead_times.unsqueeze(-1))  # (B', D)
+        
         lead_time_emb = lead_time_emb.unsqueeze(1)
-        x = x + lead_time_emb  # B, L, D
+        x = x + lead_time_emb  # (B', L, D)
 
         x = self.pos_drop(x)
-        return x, var_agg_weights, time_agg_weights
+        return x, var_agg_weights
 
     def backbone(self, x: torch.Tensor):
         """Backbone consisting of several attention blocks.
 
         Args:
-            x (torch.Tensor): `[B, L, D]` shape. Encoded weather state across the globe
+            x (torch.Tensor): `[B', L, D]` shape. Encoded weather state across the globe
         Returns:
-            x (torch.Tensor): `[B, L, D]` shape. Transformed weather state
+            x (torch.Tensor): `[B', L, D]` shape. Transformed weather state
         """
         for blk in self.blocks:
             x = blk(x)
         x = self.norm(x)
         return x
 
-    def decoder(self, x: torch.Tensor):
+    def decoder(self, x: torch.Tensor, B: int, T:int, need_weights: bool):
         """Decode weather state back to the spatial grid
         
         Args:
-            x (torch.Tensor): `[B, L, D]` shape. Transformed weather state from backbone
+            x (torch.Tensor): `[B', L, D]` shape. Transformed weather state from backbone
+            B (int): Batch size
+            T (int): History size
+            need_weights (bool): If true, attention weights for time aggregation
+                will be computed and returned alongside output tensor if temporal attention is used
         Returns:
             x (torch.Tensor): `[B, V, H, W]` shape. Decoded weather state
+            time_agg_weights (torch.Tensor): `[B, V, L, 1, T]` shape. Attention weights for time aggregation if 
+                need_weights is True and temporal attention was used. Otherwise None
         """
+        time_agg_weights = None
+
+        if self.temporal_attention:
+            x = x.unflatten(0, (B, T)) # (B, T, L, D)
+            x = x + self.time_embed[:, :T].unsqueeze(2)
+            x, time_agg_weights = self.aggregate(x, self.time_agg, self.time_query, need_weights=need_weights)  # (B, 1, L, D)
+            x = x.squeeze(1) # (B, L, D)
+
         x = self.head(x)  # B, L, V*p*p
         x = self.unpatchify(x) # B, V, H, W
-        return x
+        return x, time_agg_weights
 
     def forward(self, x: torch.tensor, lead_times: torch.tensor, in_variables: list, out_variables: list, need_weights: bool = False):
         """Forward pass through the model.
@@ -328,16 +334,18 @@ class ClimaX(nn.Module):
             time_agg_weights (torch.Tensor): `[B, Vo, H/p, W/p, 1, T]` shape. Attention weights for time aggregation if 
                 need_weights is True and temporal attention was used. Otherwise None
         """
-        x, var_agg_weights, time_agg_weights = self.encoder(x, lead_times, in_variables, need_weights)  # B, L, D
+        B, T, _, _, _ = x.shape
+
+        x, var_agg_weights = self.encoder(x, lead_times, in_variables, need_weights)  # B, L, D
         x = self.backbone(x)
-        x = self.decoder(x)
+        x, time_agg_weights = self.decoder(x, B, T, need_weights)
         out_var_ids = self.get_var_ids(tuple(out_variables), x.device)
         x = x[:, out_var_ids]
 
         if need_weights:
             hp, wp = int(self.img_size[0] / self.patch_size), int(self.img_size[1] / self.patch_size)
             var_agg_weights = var_agg_weights.unflatten(dim=1, sizes=(hp, wp))[:, :, :, :, out_var_ids] # B, H/p, W/p, 1, Vo
-            if time_agg_weights:
+            if self.temporal_attention:
                 time_agg_weights = time_agg_weights.unflatten(dim=2, sizes=(hp, wp))[:, out_var_ids] # B, Vo, H/p, W/p, 1, T
 
         return x, var_agg_weights, time_agg_weights

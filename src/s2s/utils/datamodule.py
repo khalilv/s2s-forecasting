@@ -126,6 +126,9 @@ class GlobalForecastDataModule(LightningDataModule):
     
     def get_history(self):
         return self.history
+
+    def get_hrs_each_step(self):
+        return self.hrs_each_step
     
     def get_transforms(self, group: str):
         if group == 'in':

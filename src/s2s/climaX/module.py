@@ -118,6 +118,8 @@ class GlobalForecastModule(LightningModule):
             if k not in state_dict.keys():
                 print(f"Removing key {k} from pretrained checkpoint")
                 del checkpoint_model[k]
+            elif 'var_query' in k:
+                checkpoint_model[k] = checkpoint_model[k].expand(state_dict[k].shape)
             elif checkpoint_model[k].shape != state_dict[k].shape:
                 if 'token_embeds' in k and all([state_dict[k].shape[i] == checkpoint_model[k].shape[i] for i in [0, 2, 3]]) and state_dict[k].shape[1] > checkpoint_model[k].shape[1]:
                     print(f'Adapting initial history weights for {k}')
@@ -175,6 +177,7 @@ class GlobalForecastModule(LightningModule):
                           drop_path=self.drop_path, 
                           drop_rate=self.drop_rate, 
                           history=self.history,
+                          hrs_each_step=self.hrs_each_step,
                           temporal_attention=self.temporal_attention)
         if len(self.pretrained_path) > 0:
             self.load_pretrained_weights(self.pretrained_path)
@@ -185,6 +188,9 @@ class GlobalForecastModule(LightningModule):
     def set_history(self, history: list):
         self.history = history + [0] # + [0] because the model considers the current timestamp as history
         # self.history = history[::8] + [0] # + [0] because the model considers the current timestamp as history
+    
+    def set_hrs_each_step(self, hrs_each_step: int):
+        self.hrs_each_step = hrs_each_step
       
     def set_lat_lon(self, lat, lon):
         self.lat = lat
