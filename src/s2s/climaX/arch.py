@@ -37,19 +37,19 @@ class ClimaX(nn.Module):
 
     def __init__(
         self,
-        in_vars,
-        img_size=[32, 64],
-        patch_size=2,
-        embed_dim=1024,
-        depth=8,
-        decoder_depth=2,
-        num_heads=16,
-        mlp_ratio=4.0,
-        drop_path=0.1,
-        drop_rate=0.1,
-        history=[],
-        hrs_each_step=6,
-        temporal_attention=False
+        in_vars: list,
+        img_size: list = [32, 64],
+        patch_size: int = 2,
+        embed_dim: int = 1024,
+        depth: int = 8,
+        decoder_depth: int = 2,
+        num_heads: int = 16,
+        mlp_ratio: float = 4.0,
+        drop_path: float = 0.1,
+        drop_rate: float = 0.1,
+        history: list = [],
+        hrs_each_step: int = 6,
+        temporal_attention: bool = False
     ):
         super().__init__()
 
@@ -87,6 +87,8 @@ class ClimaX(nn.Module):
             # time aggregation: a learnable query and a single-layer cross attention
             self.time_query = nn.Parameter(torch.zeros(self.num_patches, 1, embed_dim))
             self.time_agg = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
+            #rollout step embedding to denote how many rollout steps were used to generate each timestep
+            self.rollout_step_embed = nn.Linear(1, embed_dim)
 
         # --------------------------------------------------------------------------
 
@@ -291,13 +293,13 @@ class ClimaX(nn.Module):
         x = self.norm(x)
         return x
 
-    def decoder(self, x: torch.Tensor, B: int, T:int, need_weights: bool):
+    def decoder(self, x: torch.Tensor, rollout_steps: torch.Tensor, need_weights: bool):
         """Decode weather state back to the spatial grid
         
         Args:
             x (torch.Tensor): `[B', L, D]` shape. Transformed weather state from backbone
-            B (int): Batch size
-            T (int): History size
+            rollout_steps (torch.Tensor): `[B, T]` shape. Number of rollout steps used to generate each 
+                timestep for each element of the batch. Will only be used if temporal attention is used
             need_weights (bool): If true, attention weights for time aggregation
                 will be computed and returned alongside output tensor if temporal attention is used
         Returns:
@@ -306,10 +308,19 @@ class ClimaX(nn.Module):
                 need_weights is True and temporal attention was used. Otherwise None
         """
         time_agg_weights = None
-
+        B, T = rollout_steps.shape
         if self.temporal_attention:
             x = x.unflatten(0, (B, T)) # (B, T, L, D)
+
+            #add time embedding
             x = x + self.time_embed[:, :T].unsqueeze(2)
+
+            #add rollout step embedding
+            rollout_steps_emb = self.rollout_step_embed(rollout_steps.flatten(0, 1).unsqueeze(-1))
+            rollout_steps_emb = rollout_steps_emb.unflatten(dim=0, sizes=(B, T))
+            x = x + rollout_steps_emb.unsqueeze(2)
+
+            #aggregate timesteps
             x, time_agg_weights = self.aggregate(x, self.time_agg, self.time_query, need_weights=need_weights)  # (B, 1, L, D)
             x = x.squeeze(1) # (B, L, D)
 
@@ -317,12 +328,14 @@ class ClimaX(nn.Module):
         x = self.unpatchify(x) # B, V, H, W
         return x, time_agg_weights
 
-    def forward(self, x: torch.tensor, lead_times: torch.tensor, in_variables: list, out_variables: list, need_weights: bool = False):
+    def forward(self, x: torch.Tensor, lead_times: torch.Tensor, rollout_steps: torch.Tensor, in_variables: list, out_variables: list, need_weights: bool = False):
         """Forward pass through the model.
 
         Args:
             x (torch.Tensor): `[B, T, V, H, W]` shape. Input weather/climate variables
             lead_times (torch.Tensor): `[B]` shape. Forecasting lead times of each element of the batch.
+            rollout_steps (torch.Tensor): `[B, T]` shape. Number of rollout steps used to generate each 
+                timestep for each element of the batch
             variables (list): `[V]` shape. Names of input variables.
             output_variables (list): `[Vo]` shape. Names of output variables.
             need_weights (bool): If true, attention weights for variable aggregation and time aggregation 
@@ -334,11 +347,9 @@ class ClimaX(nn.Module):
             time_agg_weights (torch.Tensor): `[B, Vo, H/p, W/p, 1, T]` shape. Attention weights for time aggregation if 
                 need_weights is True and temporal attention was used. Otherwise None
         """
-        B, T, _, _, _ = x.shape
-
         x, var_agg_weights = self.encoder(x, lead_times, in_variables, need_weights)  # B, L, D
         x = self.backbone(x)
-        x, time_agg_weights = self.decoder(x, B, T, need_weights)
+        x, time_agg_weights = self.decoder(x, rollout_steps, need_weights)
         out_var_ids = self.get_var_ids(tuple(out_variables), x.device)
         x = x[:, out_var_ids]
 
