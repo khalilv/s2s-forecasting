@@ -352,11 +352,11 @@ class ClimaX(nn.Module):
         x, time_agg_weights = self.decoder(x, rollout_steps, need_weights)
         out_var_ids = self.get_var_ids(tuple(out_variables), x.device)
         x = x[:, out_var_ids]
-
+        
         if need_weights:
             hp, wp = int(self.img_size[0] / self.patch_size), int(self.img_size[1] / self.patch_size)
-            var_agg_weights = var_agg_weights.unflatten(dim=1, sizes=(hp, wp))[:, :, :, :, out_var_ids] # B, H/p, W/p, 1, Vo
+            var_agg_weights = var_agg_weights.unflatten(dim=1, sizes=(hp, wp))[:, :, :, :, out_var_ids] # B', H/p, W/p, 1, Vo
             if self.temporal_attention:
-                time_agg_weights = time_agg_weights.unflatten(dim=2, sizes=(hp, wp))[:, out_var_ids] # B, Vo, H/p, W/p, 1, T
+                time_agg_weights = time_agg_weights.unflatten(dim=1, sizes=(hp, wp)) # B, H/p, W/p, 1, T
 
         return x, var_agg_weights, time_agg_weights

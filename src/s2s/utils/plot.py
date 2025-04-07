@@ -73,50 +73,36 @@ def plot_aggregated_variables(npz_files: list, labels: list, variables: list, x_
     else:
         plt.show()
     
-def plot_attn_weights(npz_file: str, labels: list, variables: list, title: str, x_ticks: list, output_filename: str = None):
+def plot_attn_weights(npz_file: str, key: str, title: str, x_ticks: list, x_label: str, output_filename: str = None):
     """Plot attention weights for multiple variables across history timesteps.
 
     Args:
         npz_file (str): Path to .npz file containing attention weights
-        labels (list): List of labels for each variable in the plot legend
-        variables (list): List of variable names to plot attention weights for
+        key (str): Key of weights in data file
         title (str): Title for the plot
         x_ticks (list): List of x-axis tick labels showing history timesteps
+        x_label (str): Label for x-axis
         output_filename (str, optional): If provided, save plot to this file. Defaults to None.
     """
     data = np.load(npz_file)
-    history_attn_weights_mean = []
-    history_attn_weights_std = []
-    for i, variable in enumerate(variables):
-        assert variable in data, f"Error: variable {variable} not found in {npz_file}"
-        attn_weights = data[variable]
-        attn_weights_mean = attn_weights.mean(axis=(0,1,2,3))
-        attn_weights_std = attn_weights.std(axis=(0,1,2,3))
-        for t in range(len(attn_weights_mean)):
-            if i == 0:
-                history_attn_weights_mean.append([attn_weights_mean[t]])
-                history_attn_weights_std.append([attn_weights_std[t]])
-            else:
-                history_attn_weights_mean[t].append(attn_weights_mean[t])
-                history_attn_weights_std[t].append(attn_weights_std[t])
-
+    
+    attn_weights = data[key]
+    attn_weights_mean = attn_weights.mean(axis=(0,1,2,3))
+    attn_weights_std = attn_weights.std(axis=(0,1,2,3))
+   
     fig, ax = plt.subplots(figsize=(12, 6))
     
-    x = np.arange(len(history_attn_weights_mean)) 
-    width = 0.8 / len(variables) 
+    x = np.arange(len(attn_weights_mean)) 
+    width = 0.8
     
-    for i in range(len(variables)):
-        values = [weights[i] for weights in history_attn_weights_mean]
-        yerr = [weights[i] for weights in history_attn_weights_std]
-        x_pos = x - 0.4 + (i + 0.5) * width
-        ax.bar(x_pos, values, width, label=labels[i], yerr=yerr, ecolor='black', capsize=3)
+    x_pos = x - 0.4 + (0.5) * width
+    ax.bar(x_pos, attn_weights_mean, width, yerr=attn_weights_std, ecolor='black', capsize=3)
     
-    ax.set_xlabel('History (hrs)')
+    ax.set_xlabel(x_label)
     ax.set_ylabel('Weight')
     ax.set_title(title)
     ax.set_xticks(x)
-    ax.set_xticklabels(x_ticks)
-    ax.legend()
+    ax.set_xticklabels(x_ticks, rotation=90)
     
     plt.tight_layout()
     
@@ -174,6 +160,35 @@ def plot_spatial_map_with_basemap(data: np.ndarray, lon: np.ndarray, lat: np.nda
     plt.close()
 
     return
+
+def plot_correlation(npz_file: str, x_label: str, y_label: str, title: str, freq: int, start: int = 0, end: int = None, output_filename: str = None):
+    """Plot attention weights for multiple variables across history timesteps.
+
+    Args:
+        npz_file (str): Path to .npz file containing attention weights
+        labels (list): List of labels for each variable in the plot legend
+        variables (list): List of variable names to plot attention weights for
+        title (str): Title for the plot
+        x_ticks (list): List of x-axis tick labels showing history timesteps
+        output_filename (str, optional): If provided, save plot to this file. Defaults to None.
+    """
+    data = np.load(npz_file)
+    means = data['correlation_means'][start:end:freq]
+    stds = data['correlation_stds'][start:end:freq] 
+    timesteps = data['timestep_hours'][start:end:freq] / 24
+    
+    plt.plot(timesteps, means, linestyle='-', color = 'g')
+    plt.fill_between(timesteps, np.subtract(means, stds), np.add(means, stds), color='lightgreen')
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.title(title)
+    plt.tight_layout()
+    
+    if output_filename:
+        plt.savefig(output_filename, dpi=300, bbox_inches='tight')
+        plt.close()
+    else:
+        plt.show()
 
 def main():
     

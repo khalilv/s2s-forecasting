@@ -161,8 +161,8 @@ class GlobalForecastModule(LightningModule):
             self.test_lat_weighted_rmse[step] = lat_weighted_rmse(self.out_variables, self.lat, denormalize)
             self.test_lat_weighted_acc[step] = lat_weighted_acc(self.out_variables, self.lat, denormalize)
             self.test_acc_spatial_map[step] = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
-            self.test_time_agg_weights[step] = aggregate_attn_weights(self.out_variables, (len(self.lat) // self.patch_size, len(self.lon) // self.patch_size), 1, len(self.history), suffix='time')
-            self.test_var_agg_weights[step] = aggregate_attn_weights(['agg'], (len(self.lat) // self.patch_size, len(self.lon) // self.patch_size), 1, len(self.out_variables), suffix='var')
+            self.test_time_agg_weights[step] = aggregate_attn_weights((len(self.lat) // self.patch_size, len(self.lon) // self.patch_size), 1, len(self.history), suffix='time')
+            self.test_var_agg_weights[step] = aggregate_attn_weights((len(self.lat) // self.patch_size, len(self.lon) // self.patch_size), 1, len(self.out_variables), suffix='var')
 
     def init_network(self):
         variables = self.static_variables + ["latitude"] + self.in_variables #climaX includes 2d latitude as an input field
@@ -404,8 +404,8 @@ class GlobalForecastModule(LightningModule):
 
                 if self.temporal_attention:
                     self.test_time_agg_weights[step + 1].update(time_agg_weights)
-                self.test_var_agg_weights[step + 1].update(var_agg_weights.unsqueeze(1))
-            
+                self.test_var_agg_weights[step + 1].update(var_agg_weights)
+                
             # x_latest = preds.unsqueeze(1)
             x = torch.cat([x[:,1:], preds.unsqueeze(1)], axis=1)
             rollout_steps = torch.cat([rollout_steps[:, 1:], rollout_steps[:, -1:] + 1], axis=1)
@@ -458,11 +458,10 @@ class GlobalForecastModule(LightningModule):
                                 plot_spatial_map_with_basemap(data=map, lat=latitudes, lon=longitudes, title=f'{var}_{suffix}', filename=f"{self.logger.log_dir}/test_{var}_{suffix}.png")                
             
             attn_weights_dict = {**var_agg_attn_weights, **time_attn_weights}
-            del attn_weights_dict['attn_weights_agg_var'] #redundant
-            for var in attn_weights_dict.keys():
-                if var not in results_dict:
-                    results_dict[var] = []  
-                results_dict[var].append(attn_weights_dict[var].float().cpu().numpy())
+            for k in attn_weights_dict.keys():
+                if k not in results_dict:
+                    results_dict[k] = []
+                results_dict[k].append(attn_weights_dict[k].float().cpu().numpy())
 
             self.test_lat_weighted_mse[step].reset()
             self.test_lat_weighted_rmse[step].reset()

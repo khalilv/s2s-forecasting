@@ -380,29 +380,24 @@ class acc_spatial_map(Metric):
         return spatial_map_dict
 
 class aggregate_attn_weights(Metric):
-    def __init__(self, vars, resolution, C_in, C_out, suffix=None, **kwargs):
+    def __init__(self, resolution, C_in, C_out, suffix=None, **kwargs):
         super().__init__(**kwargs)
 
-        self.add_state("attn_weights_sum", default=torch.zeros(len(vars),resolution[0], resolution[1], C_in, C_out), dist_reduce_fx="sum")
+        self.add_state("attn_weights_sum", default=torch.zeros(resolution[0], resolution[1], C_in, C_out), dist_reduce_fx="sum")
         self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
 
-        self.vars = vars
         self.suffix = suffix
 
     def update(self, weights: torch.Tensor):
-        assert len(weights.shape) == 6, f'Expected weight tensor with shape [B, V, H, W, C_in, C_out] but received tensor with shape {weights.shape}'
+        assert len(weights.shape) == 5, f'Expected weight tensor with shape [B, H, W, C_in, C_out] but received tensor with shape {weights.shape}'
 
-        self.attn_weights_sum += torch.sum(weights, dim=(0))
+        self.attn_weights_sum += torch.sum(weights, dim=0)
         self.count += weights.shape[0]
     
     def compute(self):
-        loss_dict = {}
+        weights_dict = {}
 
-        for i, var in enumerate(self.vars):
-            var_loss_name = f"attn_weights_{var}_{self.suffix}" if self.suffix else f"attn_weights_{var}"
-            loss_dict[var_loss_name] = self.attn_weights_sum[i] / self.count
-
-        loss_name = f"attn_weights_{self.suffix}" if self.suffix else f"attn_weights"
-        loss_dict[loss_name] = self.attn_weights_sum / self.count
+        weight_name = f"attn_weights_{self.suffix}" if self.suffix else f"attn_weights"
+        weights_dict[weight_name] = self.attn_weights_sum / self.count
         
-        return loss_dict
+        return weights_dict
