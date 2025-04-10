@@ -2,7 +2,7 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/temporal/7d_1_step_hist_finetune
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/6h_[-7,-6,-5,-4,-3,-2,-1]_hist_finetune
   precision: 16-mixed
 
   devices: 4
@@ -21,8 +21,8 @@ trainer:
   sync_batchnorm: true
   enable_checkpointing: true
 
-  accumulate_grad_batches: 4
-  log_every_n_steps: 12
+  accumulate_grad_batches: 16
+  # log_every_n_steps: 3
   gradient_clip_val: 5.0
 
   # debugging
@@ -66,7 +66,7 @@ trainer:
       init_args:
         monitor: "val/w_acc_${model.delta_time}hrs" # name of the logged metric which determines when model is improving
         mode: "max" # "max" means higher metric value is better, can be also "min"
-        patience: 10 # how many validation epochs of not improving until training stops
+        patience: 5 # how many validation epochs of not improving until training stops
         min_delta: 0. # minimum change in the monitored metric needed to qualify as an improvement
 
     - class_path: pytorch_lightning.callbacks.RichModelSummary
@@ -77,9 +77,9 @@ trainer:
 
 # ---------------------------- MODEL -------------------------------------------
 model:
-  delta_time: 168
+  delta_time: 6
   temporal_attention: true
-  lr:  5.0e-06
+  lr:  9.0e-05
   beta_1: 0.9
   beta_2: 0.999
   weight_decay: 1e-5
@@ -162,11 +162,11 @@ data:
   ]
   # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
   predict_size: 1
-  predict_step: 28
-  history: [-28]
+  predict_step: 1
+  history: [-7,-6,-5,-4,-3,-2,-1]
   hrs_each_step: 6
   max_buffer_size: 1000
-  batch_size: 8
+  batch_size: 2
   mem_load: 1.0
   num_workers: 2
   pin_memory: true
