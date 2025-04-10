@@ -304,7 +304,7 @@ class ClimaX(nn.Module):
                 will be computed and returned alongside output tensor if temporal attention is used
         Returns:
             x (torch.Tensor): `[B, V, H, W]` shape. Decoded weather state
-            time_agg_weights (torch.Tensor): `[B, V, L, 1, T]` shape. Attention weights for time aggregation if 
+            time_agg_weights (torch.Tensor): `[B, L, 1, T]` shape. Attention weights for time aggregation if 
                 need_weights is True and temporal attention was used. Otherwise None
         """
         time_agg_weights = None
@@ -342,9 +342,9 @@ class ClimaX(nn.Module):
                 will be computed and returned alongside output tensor
         Returns:
             preds (torch.Tensor): `[B, Vo, H, W]` shape. Predicted weather/climate variables.
-            var_agg_weights (torch.Tensor): `[B, H/p, W/p, 1, Vo]` shape. Attention weights for variable aggregation if 
+            var_agg_weights (torch.Tensor): `[B', L, 1, Vo]` shape. Attention weights for variable aggregation if 
                 need_weights is True. Otherwise None
-            time_agg_weights (torch.Tensor): `[B, Vo, H/p, W/p, 1, T]` shape. Attention weights for time aggregation if 
+            time_agg_weights (torch.Tensor): `[B, L, 1, T]` shape. Attention weights for time aggregation if 
                 need_weights is True and temporal attention was used. Otherwise None
         """
         x, var_agg_weights = self.encoder(x, lead_times, in_variables, need_weights)  # B, L, D
@@ -352,11 +352,8 @@ class ClimaX(nn.Module):
         x, time_agg_weights = self.decoder(x, rollout_steps, need_weights)
         out_var_ids = self.get_var_ids(tuple(out_variables), x.device)
         x = x[:, out_var_ids]
-        
-        if need_weights:
-            hp, wp = int(self.img_size[0] / self.patch_size), int(self.img_size[1] / self.patch_size)
-            var_agg_weights = var_agg_weights.unflatten(dim=1, sizes=(hp, wp))[:, :, :, :, out_var_ids] # B', H/p, W/p, 1, Vo
-            if self.temporal_attention:
-                time_agg_weights = time_agg_weights.unflatten(dim=1, sizes=(hp, wp)) # B, H/p, W/p, 1, T
 
+        if need_weights:             
+            var_agg_weights = var_agg_weights[:,:,:,out_var_ids]
+            
         return x, var_agg_weights, time_agg_weights

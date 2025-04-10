@@ -121,10 +121,13 @@ class GlobalForecastModule(LightningModule):
             elif 'var_query' in k:
                 checkpoint_model[k] = checkpoint_model[k].expand(state_dict[k].shape)
             elif checkpoint_model[k].shape != state_dict[k].shape:
-                if 'token_embeds' in k and all([state_dict[k].shape[i] == checkpoint_model[k].shape[i] for i in [0, 2, 3]]) and state_dict[k].shape[1] > checkpoint_model[k].shape[1]:
-                    print(f'Adapting initial history weights for {k}')
+                if 'token_embeds' in k and all([state_dict[k].shape[i] == checkpoint_model[k].shape[i] for i in [0, 2, 3]]):
                     w = torch.zeros(state_dict[k].shape)
-                    w[:, -checkpoint_model[k].shape[1]:] = checkpoint_model[k]
+                    if state_dict[k].shape[1] > checkpoint_model[k].shape[1]:
+                        w[:, -checkpoint_model[k].shape[1]:] = checkpoint_model[k]
+                    else:
+                        w = checkpoint_model[k][:, -state_dict[k].shape[1]:]
+                    print(f'Adapting initial history weights for {k}')
                     checkpoint_model[k] = w
                 else:
                     print(f"Removing key {k} from pretrained checkpoint")
@@ -161,8 +164,8 @@ class GlobalForecastModule(LightningModule):
             self.test_lat_weighted_rmse[step] = lat_weighted_rmse(self.out_variables, self.lat, denormalize)
             self.test_lat_weighted_acc[step] = lat_weighted_acc(self.out_variables, self.lat, denormalize)
             self.test_acc_spatial_map[step] = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
-            self.test_time_agg_weights[step] = aggregate_attn_weights((len(self.lat) // self.patch_size, len(self.lon) // self.patch_size), 1, len(self.history), suffix='time')
-            self.test_var_agg_weights[step] = aggregate_attn_weights((len(self.lat) // self.patch_size, len(self.lon) // self.patch_size), 1, len(self.out_variables), suffix='var')
+            self.test_time_agg_weights[step] = aggregate_attn_weights(len(self.lat) * len(self.lon) // self.patch_size**2, 1, len(self.history), suffix='time')
+            self.test_var_agg_weights[step] = aggregate_attn_weights(len(self.lat) * len(self.lon) // self.patch_size**2, 1, len(self.out_variables), suffix='var')
 
     def init_network(self):
         variables = self.static_variables + ["latitude"] + self.in_variables #climaX includes 2d latitude as an input field

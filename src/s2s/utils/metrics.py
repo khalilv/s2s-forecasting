@@ -380,16 +380,16 @@ class acc_spatial_map(Metric):
         return spatial_map_dict
 
 class aggregate_attn_weights(Metric):
-    def __init__(self, resolution, C_in, C_out, suffix=None, **kwargs):
+    def __init__(self, L, C_in, C_out, suffix=None, **kwargs):
         super().__init__(**kwargs)
 
-        self.add_state("attn_weights_sum", default=torch.zeros(resolution[0], resolution[1], C_in, C_out), dist_reduce_fx="sum")
+        self.add_state("attn_weights_sum", default=torch.zeros(L, C_in, C_out), dist_reduce_fx="sum")
         self.add_state("count", default=torch.tensor(0), dist_reduce_fx="sum")
 
         self.suffix = suffix
 
     def update(self, weights: torch.Tensor):
-        assert len(weights.shape) == 5, f'Expected weight tensor with shape [B, H, W, C_in, C_out] but received tensor with shape {weights.shape}'
+        assert len(weights.shape) == 4, f'Expected weight tensor with shape [B, L, C_in, C_out] but received tensor with shape {weights.shape}'
 
         self.attn_weights_sum += torch.sum(weights, dim=0)
         self.count += weights.shape[0]
