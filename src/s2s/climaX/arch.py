@@ -293,13 +293,15 @@ class ClimaX(nn.Module):
         x = self.norm(x)
         return x
 
-    def decoder(self, x: torch.Tensor, rollout_steps: torch.Tensor, need_weights: bool):
+    def decoder(self, x: torch.Tensor, B: int, T: int, rollout_step: int, need_weights: bool):
         """Decode weather state back to the spatial grid
         
         Args:
             x (torch.Tensor): `[B', L, D]` shape. Transformed weather state from backbone
-            rollout_steps (torch.Tensor): `[B, T]` shape. Number of rollout steps used to generate each 
-                timestep for each element of the batch. Will only be used if temporal attention is used
+            B (int): Batch size
+            T (int): Number of timesteps in input sequence
+            rollout_step (int): Number of rollout steps used to generate the batch.
+                Will only be used if temporal attention is used
             need_weights (bool): If true, attention weights for time aggregation
                 will be computed and returned alongside output tensor if temporal attention is used
         Returns:
@@ -308,34 +310,31 @@ class ClimaX(nn.Module):
                 need_weights is True and temporal attention was used. Otherwise None
         """
         time_agg_weights = None
-        B, T = rollout_steps.shape
         if self.temporal_attention:
             x = x.unflatten(0, (B, T)) # (B, T, L, D)
 
             #add time embedding
             x = x + self.time_embed[:, :T].unsqueeze(2)
 
-            #add rollout step embedding
-            rollout_steps_emb = self.rollout_step_embed(rollout_steps.flatten(0, 1).unsqueeze(-1))
-            rollout_steps_emb = rollout_steps_emb.unflatten(dim=0, sizes=(B, T))
-            x = x + rollout_steps_emb.unsqueeze(2)
+            #add rollout step embedding to time query
+            rollout_step_emb = self.rollout_step_embed(torch.tensor([rollout_step], device=x.device, dtype=x.dtype)) # (D)
+            time_query = self.time_query + rollout_step_emb.unsqueeze(0).unsqueeze(1)
 
             #aggregate timesteps
-            x, time_agg_weights = self.aggregate(x, self.time_agg, self.time_query, need_weights=need_weights)  # (B, 1, L, D)
+            x, time_agg_weights = self.aggregate(x, self.time_agg, time_query, need_weights=need_weights)  # (B, 1, L, D)
             x = x.squeeze(1) # (B, L, D)
 
         x = self.head(x)  # B, L, V*p*p
         x = self.unpatchify(x) # B, V, H, W
         return x, time_agg_weights
 
-    def forward(self, x: torch.Tensor, lead_times: torch.Tensor, rollout_steps: torch.Tensor, in_variables: list, out_variables: list, need_weights: bool = False):
+    def forward(self, x: torch.Tensor, lead_times: torch.Tensor, rollout_step: int, in_variables: list, out_variables: list, need_weights: bool = False):
         """Forward pass through the model.
 
         Args:
             x (torch.Tensor): `[B, T, V, H, W]` shape. Input weather/climate variables
             lead_times (torch.Tensor): `[B]` shape. Forecasting lead times of each element of the batch.
-            rollout_steps (torch.Tensor): `[B, T]` shape. Number of rollout steps used to generate each 
-                timestep for each element of the batch
+            rollout_step (int): Number of rollout steps used to generate the batch.
             variables (list): `[V]` shape. Names of input variables.
             output_variables (list): `[Vo]` shape. Names of output variables.
             need_weights (bool): If true, attention weights for variable aggregation and time aggregation 
@@ -347,9 +346,10 @@ class ClimaX(nn.Module):
             time_agg_weights (torch.Tensor): `[B, L, 1, T]` shape. Attention weights for time aggregation if 
                 need_weights is True and temporal attention was used. Otherwise None
         """
+        B, T, _, _, _ = x.shape
         x, var_agg_weights = self.encoder(x, lead_times, in_variables, need_weights)  # B, L, D
         x = self.backbone(x)
-        x, time_agg_weights = self.decoder(x, rollout_steps, need_weights)
+        x, time_agg_weights = self.decoder(x, B, T, rollout_step, need_weights)
         out_var_ids = self.get_var_ids(tuple(out_variables), x.device)
         x = x[:, out_var_ids]
 

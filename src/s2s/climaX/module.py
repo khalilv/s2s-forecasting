@@ -241,7 +241,6 @@ class GlobalForecastModule(LightningModule):
         current_timestamps = input_timestamps[:, -1]
         in_variables = static_variables + ["latitude"] + variables
         delta_times = torch.zeros(x.shape[0]) + self.delta_time 
-        rollout_steps = torch.zeros((x.shape[0], x.shape[1])) #(B, T)
         dtype = x.dtype
 
         steps = int(lead_times[0][-1] // self.delta_time)
@@ -255,7 +254,7 @@ class GlobalForecastModule(LightningModule):
             inputs = torch.cat((static, x), dim=2).to(dtype)
 
             dts = delta_times / 100 #divide deltas_times by 100 following climaX 
-            step_preds, _, _ = self.net.forward(inputs, dts.to(self.device), rollout_steps.to(self.device), in_variables, out_variables)
+            step_preds, _, _ = self.net.forward(inputs, dts.to(self.device), step, in_variables, out_variables)
 
             pred_timestamps = current_timestamps + delta_times.numpy().astype('timedelta64[h]')
             assert (output_timestamps[:, step] == pred_timestamps).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
@@ -263,7 +262,6 @@ class GlobalForecastModule(LightningModule):
             preds.append(step_preds)
             # x_latest = step_preds.unsqueeze(1)
             x = torch.cat([x[:,1:], step_preds.unsqueeze(1)], axis=1)
-            rollout_steps = torch.cat([rollout_steps[:, 1:], rollout_steps[:, -1:] + 1], axis=1)
             current_timestamps = pred_timestamps
         
         #set y and preds to float32 for metric calculations
@@ -302,7 +300,6 @@ class GlobalForecastModule(LightningModule):
         current_timestamps = input_timestamps[:, -1]
         in_variables = static_variables + ["latitude"] + variables
         delta_times = torch.zeros(x.shape[0]) + self.delta_time 
-        rollout_steps = torch.zeros((x.shape[0], x.shape[1])) #(B, T)
         dtype = x.dtype
 
         steps = int(lead_times[0][-1] // self.delta_time)
@@ -318,7 +315,7 @@ class GlobalForecastModule(LightningModule):
             inputs = torch.cat((static, x), dim=2).to(dtype)
 
             dts = delta_times / 100 #divide deltas_times by 100 following climaX 
-            preds, _, _ = self.net.forward(inputs, dts.to(self.device), rollout_steps.to(self.device), in_variables, out_variables)
+            preds, _, _ = self.net.forward(inputs, dts.to(self.device), step, in_variables, out_variables)
 
             pred_timestamps = current_timestamps + delta_times.numpy().astype('timedelta64[h]')
             
@@ -337,7 +334,6 @@ class GlobalForecastModule(LightningModule):
 
             # x_latest = preds.unsqueeze(1)
             x = torch.cat([x[:,1:], preds.unsqueeze(1)], axis=1)
-            rollout_steps = torch.cat([rollout_steps[:, 1:], rollout_steps[:, -1:] + 1], axis=1)
             current_timestamps = pred_timestamps
         
     def on_validation_epoch_end(self):
@@ -372,7 +368,6 @@ class GlobalForecastModule(LightningModule):
         current_timestamps = input_timestamps[:, -1]
         in_variables = static_variables + ["latitude"] + variables
         delta_times = torch.zeros(x.shape[0]) + self.delta_time 
-        rollout_steps = torch.zeros((x.shape[0], x.shape[1])) #(B, T)
         dtype = x.dtype
         
         steps = int(lead_times[0][-1] // self.delta_time)
@@ -387,7 +382,7 @@ class GlobalForecastModule(LightningModule):
             inputs = torch.cat((static, x), dim=2).to(dtype)
 
             dts = delta_times / 100 #divide deltas_times by 100 following climaX 
-            preds, var_agg_weights, time_agg_weights = self.net.forward(inputs, dts.to(self.device), rollout_steps.to(self.device), in_variables, out_variables, need_weights=True)
+            preds, var_agg_weights, time_agg_weights = self.net.forward(inputs, dts.to(self.device), step, in_variables, out_variables, need_weights=True)
 
             pred_timestamps = current_timestamps + delta_times.numpy().astype('timedelta64[h]')
 
@@ -411,7 +406,6 @@ class GlobalForecastModule(LightningModule):
                 
             # x_latest = preds.unsqueeze(1)
             x = torch.cat([x[:,1:], preds.unsqueeze(1)], axis=1)
-            rollout_steps = torch.cat([rollout_steps[:, 1:], rollout_steps[:, -1:] + 1], axis=1)
             current_timestamps = pred_timestamps
 
     def on_test_epoch_end(self):

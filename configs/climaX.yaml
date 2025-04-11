@@ -79,7 +79,7 @@ trainer:
 model:
   delta_time: 6
   temporal_attention: true
-  lr:  9.0e-05
+  lr:  5.0e-05
   beta_1: 0.9
   beta_2: 0.999
   weight_decay: 1e-5
