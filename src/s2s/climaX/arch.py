@@ -82,13 +82,9 @@ class ClimaX(nn.Module):
         self.lead_time_embed = nn.Linear(1, embed_dim)
 
         if temporal_attention:
-            # time embedding to denote which timestep each token belongs to
-            self.time_embed = nn.Parameter(torch.zeros(1, len(history), embed_dim))
-            # time aggregation: a learnable query and a single-layer cross attention
+            # time aggregation: a learnable query and a single-layer cross attention         
             self.time_query = nn.Parameter(torch.zeros(self.num_patches, 1, embed_dim))
             self.time_agg = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
-            #rollout step embedding to denote how many rollout steps were used to generate each timestep
-            self.rollout_step_embed = nn.Linear(1, embed_dim)
 
         # --------------------------------------------------------------------------
 
@@ -137,14 +133,24 @@ class ClimaX(nn.Module):
 
         var_embed = get_1d_sincos_pos_embed_from_grid(self.var_embed.shape[-1], np.arange(len(self.in_vars)), scale=10000)
         self.var_embed.data.copy_(torch.from_numpy(var_embed).float().unsqueeze(0))
-
-        if self.temporal_attention:
-            time_embed = get_1d_sincos_pos_embed_from_grid(self.time_embed.shape[-1], np.array(self.history), scale=10000)
-            self.time_embed.data.copy_(torch.from_numpy(time_embed).float().unsqueeze(0))
-
+        
         # initialize nn.Linear and nn.LayerNorm
         self.apply(self._init_weights)
 
+        with torch.no_grad():
+            D, H = self.time_agg.embed_dim, self.time_agg.num_heads
+            self.time_agg.in_proj_weight.zero_()
+            self.time_agg.in_proj_bias.zero_()
+
+            # Set W_v (value proj) to block-diagonal identity
+            d = D // H
+            blocks = [torch.eye(d) for _ in range(H)]
+            self.time_agg.in_proj_weight[2*D:3*D].copy_(torch.block_diag(*blocks))
+
+            # Set output projection to identity
+            self.time_agg.out_proj.weight.copy_(torch.eye(D))
+            self.time_agg.out_proj.bias.zero_()
+        
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=0.02)
@@ -198,7 +204,7 @@ class ClimaX(nn.Module):
                 set to True. Otherwise None
         """
         b, _, l, _ = x.shape
-        x = torch.einsum("bvld->blvd", x)
+        x = x.permute(0, 2, 1, 3)  # (B, L, C_in, D)
         x = x.flatten(0, 1)  # (BxL, C_in, D)
 
         #perform the aggregation using multi-headed attention
@@ -208,7 +214,7 @@ class ClimaX(nn.Module):
 
         x, attn_weights = aggregator(q, x, x, need_weights=need_weights)
         x = x.unflatten(dim=0, sizes=(b, l))  # (B, L, C_out, D)
-        x = torch.einsum("blcd->bcld", x)  # (B, C_out, L, D)
+        x = x.permute(0, 2, 1, 3)  # (B, C_out, L, D)
         
         if need_weights:
             attn_weights = attn_weights.unflatten(dim=0, sizes=(b, l))  # B, L, C_out, C_in
@@ -245,7 +251,7 @@ class ClimaX(nn.Module):
                 embeds.append(self.token_embeds[id](x[:, i : i + 1]))
             x = torch.stack(embeds, dim=1)  # (B*T, V, L, D)
         else:
-            x = torch.einsum("btvhw->bvthw", x)  # (B, V, T, H, W)
+            x = x.permute(0, 2, 1, 3, 4)  # (B, V, T, H, W)
             for i in range(len(var_ids)):
                 id = var_ids[i]
                 embeds.append(self.token_embeds[id](x[:, i]))
@@ -313,15 +319,8 @@ class ClimaX(nn.Module):
         if self.temporal_attention:
             x = x.unflatten(0, (B, T)) # (B, T, L, D)
 
-            #add time embedding
-            x = x + self.time_embed[:, :T].unsqueeze(2)
-
-            #add rollout step embedding to time query
-            rollout_step_emb = self.rollout_step_embed(torch.tensor([rollout_step], device=x.device, dtype=x.dtype)) # (D)
-            time_query = self.time_query + rollout_step_emb.unsqueeze(0).unsqueeze(1)
-
             #aggregate timesteps
-            x, time_agg_weights = self.aggregate(x, self.time_agg, time_query, need_weights=need_weights)  # (B, 1, L, D)
+            x, time_agg_weights = self.aggregate(x, self.time_agg, self.time_query, need_weights=need_weights)  # (B, 1, L, D)
             x = x.squeeze(1) # (B, L, D)
 
         x = self.head(x)  # B, L, V*p*p

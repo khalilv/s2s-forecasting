@@ -184,6 +184,17 @@ class GlobalForecastModule(LightningModule):
                           temporal_attention=self.temporal_attention)
         if len(self.pretrained_path) > 0:
             self.load_pretrained_weights(self.pretrained_path)
+        
+        self.freeze()
+    
+    def freeze(self):
+        trainable_params = ['time_query', 'time_agg']
+        for name, param in self.net.named_parameters():
+            if any([t in name for t in trainable_params]) and 'lead_time' not in name:
+                print(f'Training param {name}')
+                param.requires_grad = True 
+            else:
+                param.requires_grad = False
 
     def set_denormalization(self, denormalization):
         self.denormalization = denormalization
@@ -224,13 +235,20 @@ class GlobalForecastModule(LightningModule):
     def set_plot_variables(self, plot_variables: list):
         self.plot_variables = plot_variables
         print('Set variables to plot spatial maps for during evaluation: ', plot_variables)
-
+    
+    def select_random_lead_time(self, y, lead_times, output_timestamps, climatology = None):
+        lt = torch.randint(0, y.shape[1], (1,)).item()
+        return y[:, lt:lt+1], lead_times[:, lt:lt+1], output_timestamps[:, lt:lt+1], climatology[:, lt:lt+1] if climatology else None
+     
     def training_step(self, batch: Any, batch_idx: int):
         x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch #spread batch data 
 
         if not torch.all(lead_times == lead_times[0]):
             raise NotImplementedError("Variable lead times not implemented yet.")
         
+        # y, lead_times, output_timestamps, _ = self.select_random_lead_time(y, lead_times, output_timestamps)
+        #self.delta_time = lead_times[0][0].item()
+
         assert self.delta_time == lead_times[0][0], f'Found mismatch between configured delta time {self.delta_time} and input lead time {lead_times[0][0]}'
         
         #append 2d latitude to static variables
@@ -289,6 +307,9 @@ class GlobalForecastModule(LightningModule):
         
         if not torch.all(lead_times == lead_times[0]):
             raise NotImplementedError("Variable lead times not implemented yet.")
+
+        # y, lead_times, output_timestamps, climatology = self.select_random_lead_time(y, lead_times, output_timestamps, climatology)
+        #self.delta_time = lead_times[0][0].item()
 
         assert self.delta_time == lead_times[0][0], f'Found mismatch between configured delta time {self.delta_time} and input lead time {lead_times[0][0]}'
 
