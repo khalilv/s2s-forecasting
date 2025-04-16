@@ -82,8 +82,12 @@ class ClimaX(nn.Module):
         self.lead_time_embed = nn.Linear(1, embed_dim)
 
         if temporal_attention:
-            # time aggregation: a learnable query and a single-layer cross attention         
-            self.time_query = nn.Parameter(torch.zeros(self.num_patches, 1, embed_dim))
+            # time aggregation: a learnable query and a single-layer cross attention        
+            self.time_query_generator = nn.Sequential(
+                nn.Linear(1 + embed_dim, embed_dim),
+                nn.GELU(),
+                nn.Linear(embed_dim, embed_dim)
+            )
             self.time_agg = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
 
         # --------------------------------------------------------------------------
@@ -137,19 +141,22 @@ class ClimaX(nn.Module):
         # initialize nn.Linear and nn.LayerNorm
         self.apply(self._init_weights)
 
-        with torch.no_grad():
+        if self.temporal_attention:
             D, H = self.time_agg.embed_dim, self.time_agg.num_heads
-            self.time_agg.in_proj_weight.zero_()
-            self.time_agg.in_proj_bias.zero_()
+            self.time_agg.in_proj_weight.data.zero_()
+            self.time_agg.in_proj_bias.data.zero_()
 
             # Set W_v (value proj) to block-diagonal identity
             d = D // H
             blocks = [torch.eye(d) for _ in range(H)]
-            self.time_agg.in_proj_weight[2*D:3*D].copy_(torch.block_diag(*blocks))
+            self.time_agg.in_proj_weight[2*D:3*D].data.copy_(torch.block_diag(*blocks))
 
             # Set output projection to identity
-            self.time_agg.out_proj.weight.copy_(torch.eye(D))
-            self.time_agg.out_proj.bias.zero_()
+            self.time_agg.out_proj.weight.data.copy_(torch.eye(D))
+            self.time_agg.out_proj.bias.data.zero_()
+
+            self.time_query_generator[-1].weight.data.zero_()
+            self.time_query_generator[-1].bias.data.zero_()
         
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -319,8 +326,11 @@ class ClimaX(nn.Module):
         if self.temporal_attention:
             x = x.unflatten(0, (B, T)) # (B, T, L, D)
 
+            rollout_step_tensor = torch.full((x.shape[2], 1), rollout_step, dtype=x.dtype, device=x.device)  # (L, 1)
+            time_queries = self.time_query_generator(torch.cat([rollout_step_tensor, self.pos_embed.squeeze(0)], dim=-1))  # (L, D)
+
             #aggregate timesteps
-            x, time_agg_weights = self.aggregate(x, self.time_agg, self.time_query, need_weights=need_weights)  # (B, 1, L, D)
+            x, time_agg_weights = self.aggregate(x, self.time_agg, time_queries.unsqueeze(1), need_weights=need_weights)  # (B, 1, L, D)
             x = x.squeeze(1) # (B, L, D)
 
         x = self.head(x)  # B, L, V*p*p
