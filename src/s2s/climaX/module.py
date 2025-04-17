@@ -2,7 +2,8 @@
 # Licensed under the MIT license.
 
 # credits: https://github.com/ashleve/lightning-hydra-template/blob/main/src/models/mnist_module.py
-from typing import Any
+from typing import Any, Optional
+import random
 import numpy as np
 import torch
 from pytorch_lightning import LightningModule
@@ -40,7 +41,6 @@ class GlobalForecastModule(LightningModule):
     def __init__(
         self,
         pretrained_path: str = "",
-        delta_time: int = 6,
         temporal_attention: bool = False,
         lr: float = 5e-4,
         beta_1: float = 0.9,
@@ -59,12 +59,14 @@ class GlobalForecastModule(LightningModule):
         mlp_ratio: int = 4,
         drop_path: float = 0.1,
         drop_rate: float = 0.1,
+        randomize_lead_time: bool = False,
+        rollout_steps: int = 1,
+        lead_time_candidates: list = [],
         monitor_val_step: int = None,
         monitor_test_steps: list = [1],
     ):
         super().__init__()
         self.pretrained_path = pretrained_path
-        self.delta_time = delta_time
         self.temporal_attention = temporal_attention
         self.lr = lr
         self.beta_1 = beta_1
@@ -83,6 +85,9 @@ class GlobalForecastModule(LightningModule):
         self.mlp_ratio = mlp_ratio
         self.drop_path = drop_path
         self.drop_rate = drop_rate
+        self.randomize_lead_time = randomize_lead_time
+        self.lead_time_candidates = lead_time_candidates
+        self.rollout_steps = rollout_steps
         self.monitor_val_step = monitor_val_step
         self.monitor_test_steps = monitor_test_steps
         self.denormalization = None
@@ -149,10 +154,7 @@ class GlobalForecastModule(LightningModule):
 
         self.train_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, var_weights, suffix='norm')
         
-        if self.monitor_val_step:
-            val_suffix = f'{int(self.delta_time*self.monitor_val_step)}hrs'
-        else:
-            val_suffix = 'average'
+        val_suffix = f'rollout_step_{self.monitor_val_step}' if self.monitor_val_step else 'average'
         self.val_lat_weighted_mse = lat_weighted_mse(self.out_variables, self.lat, var_weights, suffix=f'norm_{val_suffix}')
         self.val_lat_weighted_rmse = lat_weighted_rmse(self.out_variables, self.lat, denormalize, suffix=val_suffix)
         self.val_lat_weighted_acc = lat_weighted_acc(self.out_variables, self.lat, denormalize, suffix=val_suffix)
@@ -184,9 +186,7 @@ class GlobalForecastModule(LightningModule):
                           temporal_attention=self.temporal_attention)
         if len(self.pretrained_path) > 0:
             self.load_pretrained_weights(self.pretrained_path)
-        
-        self.freeze()
-    
+            
     def freeze(self):
         trainable_params = ['time_query', 'time_agg']
         for name, param in self.net.named_parameters():
@@ -195,6 +195,9 @@ class GlobalForecastModule(LightningModule):
                 param.requires_grad = True 
             else:
                 param.requires_grad = False
+
+    def set_predict_step_size(self, step_size: int):
+        self.predict_step_size = step_size
 
     def set_denormalization(self, denormalization):
         self.denormalization = denormalization
@@ -236,45 +239,58 @@ class GlobalForecastModule(LightningModule):
         self.plot_variables = plot_variables
         print('Set variables to plot spatial maps for during evaluation: ', plot_variables)
     
-    def select_random_lead_time(self, y, lead_times, output_timestamps, climatology = None):
-        lt = torch.randint(0, y.shape[1], (1,)).item()
-        return y[:, lt:lt+1], lead_times[:, lt:lt+1], output_timestamps[:, lt:lt+1], climatology[:, lt:lt+1] if climatology else None
+    def randomize_batch_lead_time(self, batch: Any):
+        x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, remaining_predict_steps, worker_id = batch #spread batch data
+        random_lead_time = random.choice(self.lead_time_candidates) #select random lead time from candidates
+        
+        mask = (lead_times % random_lead_time == 0)[0] #lead times should be the same across batch elements so this is ok
+        divisible_lead_times = torch.where(mask)[0]
+
+        #only consider lead times up to max_rollout_steps
+        if len(divisible_lead_times) > self.rollout_steps:
+            divisible_lead_times = divisible_lead_times[:self.rollout_steps]
+        
+        divisible_lead_times = divisible_lead_times.cpu() #send to cpu
+
+        #subset data
+        y = y[:, divisible_lead_times]
+        lead_times = lead_times[:, divisible_lead_times]
+        output_timestamps = output_timestamps[:, divisible_lead_times]
+        if len(output_timestamps.shape) == 1:
+            output_timestamps = output_timestamps[:, np.newaxis]
+        if climatology is not None:
+            climatology = climatology[:, divisible_lead_times]
+            
+        return x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, remaining_predict_steps, worker_id
      
     def training_step(self, batch: Any, batch_idx: int):
+        if self.randomize_lead_time:
+            batch = self.randomize_batch_lead_time(batch)
+
         x, static, y, _, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch #spread batch data 
 
         if not torch.all(lead_times == lead_times[0]):
-            raise NotImplementedError("Variable lead times not implemented yet.")
-        
-        # y, lead_times, output_timestamps, _ = self.select_random_lead_time(y, lead_times, output_timestamps)
-        #self.delta_time = lead_times[0][0].item()
-
-        assert self.delta_time == lead_times[0][0], f'Found mismatch between configured delta time {self.delta_time} and input lead time {lead_times[0][0]}'
-        
+            raise NotImplementedError("Variable lead times within batch not supported.")
+       
         #append 2d latitude to static variables
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
         static = torch.cat((static,lat2d_expanded), dim=1)
         static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
-        # static = static.unsqueeze(1).expand(-1, len(self.history), -1, -1, -1) 
         current_timestamps = input_timestamps[:, -1]
         in_variables = static_variables + ["latitude"] + variables
-        delta_times = torch.zeros(x.shape[0]) + self.delta_time 
         dtype = x.dtype
 
-        steps = int(lead_times[0][-1] // self.delta_time)
+        assert self.rollout_steps <= y.shape[1], f'Invalid rollout steps {self.rollout_steps} for target with {y.shape[1]} steps'
 
         preds = []
-        # x_latest = x[:, -1:]
-        for step in range(steps):
-            # x_hist = torch.cat((x[:, step:-1:steps], x_latest), dim=1)
-            #prepend static variables to input variables
-            # inputs = torch.cat((static, x_hist), dim=2).to(dtype)
+        for step in range(self.rollout_steps):
             inputs = torch.cat((static, x), dim=2).to(dtype)
 
-            dts = delta_times / 100 #divide deltas_times by 100 following climaX 
-            step_preds, _, _ = self.net.forward(inputs, dts.to(self.device), step, in_variables, out_variables)
+            delta_time = lead_times[:,step] - lead_times[:,step - 1] if step > 0 else lead_times[:,step]
+            dts = delta_time / 100 #divide deltas_times by 100 following climaX 
+            step_preds, _, _ = self.net.forward(inputs, dts, step, in_variables, out_variables)
 
-            pred_timestamps = current_timestamps + delta_times.numpy().astype('timedelta64[h]')
+            pred_timestamps = current_timestamps + delta_time.cpu().numpy().astype('timedelta64[h]')
             assert (output_timestamps[:, step] == pred_timestamps).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
 
             preds.append(step_preds)
@@ -303,42 +319,33 @@ class GlobalForecastModule(LightningModule):
         return batch_loss['w_mse_norm']
     
     def validation_step(self, batch: Any, batch_idx: int):
+        if self.randomize_lead_time:
+            batch = self.randomize_batch_lead_time(batch)
+            
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
         
         if not torch.all(lead_times == lead_times[0]):
-            raise NotImplementedError("Variable lead times not implemented yet.")
-
-        # y, lead_times, output_timestamps, climatology = self.select_random_lead_time(y, lead_times, output_timestamps, climatology)
-        #self.delta_time = lead_times[0][0].item()
-
-        assert self.delta_time == lead_times[0][0], f'Found mismatch between configured delta time {self.delta_time} and input lead time {lead_times[0][0]}'
+            raise NotImplementedError("Variable lead times within batch not supported.")
 
         #append 2d latitude to static variables
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
         static = torch.cat((static,lat2d_expanded), dim=1)
         static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1) 
-        # static = static.unsqueeze(1).expand(-1, len(self.history), -1, -1, -1) 
         current_timestamps = input_timestamps[:, -1]
         in_variables = static_variables + ["latitude"] + variables
-        delta_times = torch.zeros(x.shape[0]) + self.delta_time 
         dtype = x.dtype
 
-        steps = int(lead_times[0][-1] // self.delta_time)
         if self.monitor_val_step:
-            assert self.monitor_val_step - 1 <= y.shape[1], f'Invalid test steps {self.monitor_test_steps} to monitor for {y.shape[1]} rollout steps'
+            assert self.monitor_val_step - 1 <= y.shape[1], f'Invalid test steps {self.monitor_test_steps} to monitor for {self.rollout_steps} rollout steps'
 
-        # x_latest = x[:, -1:]
-        for step in range(steps):
-            # x_hist = torch.cat((x[:, step:-1:steps], x_latest), dim=1)
-
-            #prepend static variables to input variables
-            # inputs = torch.cat((static, x_hist), dim=2).to(dtype)
+        for step in range(self.rollout_steps):
             inputs = torch.cat((static, x), dim=2).to(dtype)
 
-            dts = delta_times / 100 #divide deltas_times by 100 following climaX 
-            preds, _, _ = self.net.forward(inputs, dts.to(self.device), step, in_variables, out_variables)
+            delta_time = lead_times[:,step] - lead_times[:,step - 1] if step > 0 else lead_times[:,step]
+            dts = delta_time / 100 #divide deltas_times by 100 following climaX 
+            preds, _, _ = self.net.forward(inputs, dts, step, in_variables, out_variables)
 
-            pred_timestamps = current_timestamps + delta_times.numpy().astype('timedelta64[h]')
+            pred_timestamps = current_timestamps + delta_time.cpu().numpy().astype('timedelta64[h]')
             
             if not self.monitor_val_step or step + 1 == self.monitor_val_step:
                 assert (output_timestamps[:, step] == pred_timestamps).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
@@ -364,6 +371,7 @@ class GlobalForecastModule(LightningModule):
        
         #scalar metrics
         loss_dict = {**w_mse_norm, **w_rmse, **w_acc}
+        print(loss_dict)
         for var in loss_dict.keys():
             self.log(
                 "val/" + var,
@@ -379,33 +387,28 @@ class GlobalForecastModule(LightningModule):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
         
         if not torch.all(lead_times == lead_times[0]):
-            raise NotImplementedError("Variable lead times not implemented yet.")
+            raise NotImplementedError("Variable lead times within batch not supported.")
 
         #append 2d latitude to static variables
         lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
         static = torch.cat((static,lat2d_expanded), dim=1)
         static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1)
-        # static = static.unsqueeze(1).expand(-1, len(self.history), -1, -1, -1)
         current_timestamps = input_timestamps[:, -1]
         in_variables = static_variables + ["latitude"] + variables
-        delta_times = torch.zeros(x.shape[0]) + self.delta_time 
         dtype = x.dtype
         
-        steps = int(lead_times[0][-1] // self.delta_time)
-        assert max(self.monitor_test_steps) - 1 <= y.shape[1], f'Invalid test steps {self.monitor_test_steps} to monitor for {y.shape[1]} rollout steps'
+        steps = lead_times.shape[1]
+        assert max(self.monitor_test_steps) - 1 <= steps, f'Invalid test steps {self.monitor_test_steps} to monitor for {steps} rollout steps'
                 
-        # x_latest = x[:, -1:]
         for step in range(steps):
-            # x_hist = torch.cat((x[:, step:-1:steps], x_latest), dim=1)
 
-            #prepend static variables to input variables
-            # inputs = torch.cat((static, x_hist), dim=2).to(dtype)
             inputs = torch.cat((static, x), dim=2).to(dtype)
 
-            dts = delta_times / 100 #divide deltas_times by 100 following climaX 
-            preds, var_agg_weights, time_agg_weights = self.net.forward(inputs, dts.to(self.device), step, in_variables, out_variables, need_weights=True)
+            delta_time = lead_times[:,step] - lead_times[:,step - 1] if step > 0 else lead_times[:,step]
+            dts = delta_time / 100 #divide deltas_times by 100 following climaX 
+            preds, var_agg_weights, time_agg_weights = self.net.forward(inputs, dts, step, in_variables, out_variables, need_weights=True)
 
-            pred_timestamps = current_timestamps + delta_times.numpy().astype('timedelta64[h]')
+            pred_timestamps = current_timestamps + delta_time.numpy().astype('timedelta64[h]')
 
             if step + 1 in self.monitor_test_steps:
                 assert (output_timestamps[:, step] == pred_timestamps).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
@@ -432,7 +435,7 @@ class GlobalForecastModule(LightningModule):
     def on_test_epoch_end(self):
         results_dict = {'lead_time_hrs': [], 'out_variables': self.out_variables}
         for step in self.monitor_test_steps:
-            lead_time = int(step*self.delta_time) #current forecast lead time in hours
+            lead_time = int(step*self.predict_step_size*self.hrs_each_step) #current forecast lead time in hours
             results_dict['lead_time_hrs'].append(lead_time)
             suffix = f'{lead_time}hrs'
             w_mse_norm = self.test_lat_weighted_mse[step].compute()

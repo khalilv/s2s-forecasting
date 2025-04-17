@@ -25,6 +25,7 @@ def main():
     cli.model.set_lat2d(cli.datamodule.normalize_data)
     cli.model.set_history(cli.datamodule.get_history())
     cli.model.set_hrs_each_step(cli.datamodule.get_hrs_each_step())
+    cli.model.set_predict_step_size(cli.datamodule.get_predict_step_size())
     cli.model.set_variables(cli.datamodule.in_variables, cli.datamodule.static_variables, cli.datamodule.out_variables)
     cli.model.set_plot_variables(cli.datamodule.plot_variables)
     if cli.datamodule.normalize_data:

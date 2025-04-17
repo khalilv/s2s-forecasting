@@ -129,6 +129,9 @@ class GlobalForecastDataModule(LightningDataModule):
 
     def get_hrs_each_step(self):
         return self.hrs_each_step
+
+    def get_predict_step_size(self):
+        return self.predict_step
     
     def get_transforms(self, group: str):
         if group == 'in':

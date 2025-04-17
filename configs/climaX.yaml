@@ -2,7 +2,7 @@ seed_everything: 42
 
 # ---------------------------- TRAINER -------------------------------------------
 trainer:
-  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/6h_[-7,-6,-5,-4,-3,-2,-1]_hist_finetune
+  default_root_dir: /glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[1d,2d,3d,4d]_2_step
   precision: 16-mixed
 
   devices: 4
@@ -21,7 +21,7 @@ trainer:
   sync_batchnorm: true
   enable_checkpointing: true
 
-  accumulate_grad_batches: 16
+  #accumulate_grad_batches: 16
   # log_every_n_steps: 3
   gradient_clip_val: 5.0
 
@@ -54,7 +54,7 @@ trainer:
     - class_path: pytorch_lightning.callbacks.ModelCheckpoint
       init_args:
         dirpath: "${trainer.default_root_dir}/checkpoints"
-        monitor: "val/w_acc_${model.delta_time}hrs" # name of the logged metric which determines when model is improving
+        monitor: "val/w_acc_average" # name of the logged metric which determines when model is improving
         mode: "max" # "max" means higher metric value is better, can be also "min"
         save_top_k: 1 # save k best models (determined by above metric)
         save_last: true # additionaly always save model from last epoch
@@ -64,9 +64,9 @@ trainer:
 
     - class_path: pytorch_lightning.callbacks.EarlyStopping
       init_args:
-        monitor: "val/w_acc_${model.delta_time}hrs" # name of the logged metric which determines when model is improving
+        monitor: "val/w_acc_average" # name of the logged metric which determines when model is improving
         mode: "max" # "max" means higher metric value is better, can be also "min"
-        patience: 5 # how many validation epochs of not improving until training stops
+        patience: 10 # how many validation epochs of not improving until training stops
         min_delta: 0. # minimum change in the monitored metric needed to qualify as an improvement
 
     - class_path: pytorch_lightning.callbacks.RichModelSummary
@@ -77,9 +77,8 @@ trainer:
 
 # ---------------------------- MODEL -------------------------------------------
 model:
-  delta_time: 6
-  temporal_attention: true
-  lr:  5.0e-05
+  temporal_attention: false
+  lr:  7.0e-07
   beta_1: 0.9
   beta_2: 0.999
   weight_decay: 1e-5
@@ -87,7 +86,7 @@ model:
   max_steps: 50000
   warmup_start_lr: 1e-8
   eta_min: 1e-8
-  pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/climaX-5.625-cmip6.ckpt"
+  pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[1d,2d,3d,4d]/checkpoints/epoch_020.ckpt"
   img_size: [32, 64]
   patch_size: 2
   embed_dim: 1024
@@ -97,8 +96,11 @@ model:
   mlp_ratio: 4
   drop_path: 0.1
   drop_rate: 0.1
-  monitor_val_step: 1
-  monitor_test_steps: [1,2,3,4,5,6,7,8]
+  randomize_lead_time: true
+  lead_time_candidates: [24,48,72,96]
+  rollout_steps: 2
+  monitor_val_step: null
+  monitor_test_steps: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170]
 
 
 # ---------------------------- DATA -------------------------------------------
@@ -161,9 +163,9 @@ data:
       # "2m_temperature",
   ]
   # [predict_step * hrs_each_step * lt = max lead time (hrs)] for lt in predict_size
-  predict_size: 1
-  predict_step: 1
-  history: [-7,-6,-5,-4,-3,-2,-1]
+  predict_size: 8
+  predict_step: 4
+  history: []
   hrs_each_step: 6
   max_buffer_size: 1000
   batch_size: 2
