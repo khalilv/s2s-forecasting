@@ -417,7 +417,7 @@ class GlobalForecastModule(LightningModule):
                 dts = delta_time / 100 #divide deltas_times by 100 following climaX 
                 preds, var_agg_weights, time_agg_weights = self.net.forward(inputs, dts, step, in_variables, out_variables, need_weights=True)
 
-                pred_timestamps = current_timestamps + delta_time.numpy().astype('timedelta64[h]')
+                pred_timestamps = current_timestamps + delta_time.cpu().numpy().astype('timedelta64[h]')
 
                 if step + 1 in self.monitor_test_steps:
                     assert (output_timestamps[:, step] == pred_timestamps).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
