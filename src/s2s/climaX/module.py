@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 # credits: https://github.com/ashleve/lightning-hydra-template/blob/main/src/models/mnist_module.py
-from typing import Any, Optional
+from typing import Any
 import random
 import numpy as np
 import torch
@@ -22,6 +22,7 @@ from s2s.utils.metrics import (
 from s2s.climaX.pos_embed import interpolate_pos_embed
 from s2s.utils.plot import plot_spatial_map_with_basemap
 from s2s.utils.data_utils import WEIGHTS_DICT
+from s2s.utils.trajectory import random_trajectories, build_trajectories, homogeneous_trajectories, load_trajectories_from_file
 
 class GlobalForecastModule(LightningModule):
     """Lightning module for global forecasting with the ClimaX model.
@@ -62,6 +63,9 @@ class GlobalForecastModule(LightningModule):
         randomize_lead_time: bool = False,
         rollout_steps: int = 1,
         lead_time_candidates: list = [],
+        ensemble_inference: bool = False,
+        ensemble_size: int = 32,
+        trajecory_path: str = '',
         monitor_val_step: int = None,
         monitor_test_steps: list = [1],
     ):
@@ -88,6 +92,9 @@ class GlobalForecastModule(LightningModule):
         self.randomize_lead_time = randomize_lead_time
         self.lead_time_candidates = lead_time_candidates
         self.rollout_steps = rollout_steps
+        self.ensemble_inference = ensemble_inference
+        self.ensemble_size = ensemble_size
+        self.trajectory_path = trajecory_path
         self.monitor_val_step = monitor_val_step
         self.monitor_test_steps = monitor_test_steps
         self.denormalization = None
@@ -371,7 +378,6 @@ class GlobalForecastModule(LightningModule):
        
         #scalar metrics
         loss_dict = {**w_mse_norm, **w_rmse, **w_acc}
-        print(loss_dict)
         for var in loss_dict.keys():
             self.log(
                 "val/" + var,
@@ -384,6 +390,58 @@ class GlobalForecastModule(LightningModule):
         self.val_lat_weighted_acc.reset()
 
     def test_step(self, batch: Any, batch_idx: int):
+        if self.ensemble_inference:
+            self.ensemble_test_step(batch, batch_idx)
+        else:
+            x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
+        
+            if not torch.all(lead_times == lead_times[0]):
+                raise NotImplementedError("Variable lead times within batch not supported.")
+
+            #append 2d latitude to static variables
+            lat2d_expanded = self.lat2d.unsqueeze(0).expand(static.shape[0], -1, -1, -1).to(device=static.device)
+            static = torch.cat((static,lat2d_expanded), dim=1)
+            static = static.unsqueeze(1).expand(-1, x.shape[1], -1, -1, -1)
+            current_timestamps = input_timestamps[:, -1]
+            in_variables = static_variables + ["latitude"] + variables
+            dtype = x.dtype
+            
+            steps = lead_times.shape[1]
+            assert max(self.monitor_test_steps) - 1 <= steps, f'Invalid test steps {self.monitor_test_steps} to monitor for {steps} rollout steps'
+                    
+            for step in range(steps):
+
+                inputs = torch.cat((static, x), dim=2).to(dtype)
+
+                delta_time = lead_times[:,step] - lead_times[:,step - 1] if step > 0 else lead_times[:,step]
+                dts = delta_time / 100 #divide deltas_times by 100 following climaX 
+                preds, var_agg_weights, time_agg_weights = self.net.forward(inputs, dts, step, in_variables, out_variables, need_weights=True)
+
+                pred_timestamps = current_timestamps + delta_time.numpy().astype('timedelta64[h]')
+
+                if step + 1 in self.monitor_test_steps:
+                    assert (output_timestamps[:, step] == pred_timestamps).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
+                    
+                    #set y and preds to float32 for metric calculations
+                    preds = preds.float()
+                    targets = y[:, step].float().squeeze(1)
+                    clim = climatology[:, step].float().squeeze(1)
+                    
+                    self.test_lat_weighted_mse[step + 1].update(preds, targets)
+                    self.test_lat_weighted_rmse[step + 1].update(preds, targets)
+                    self.test_rmse_spatial_map[step + 1].update(preds, targets)
+                    self.test_lat_weighted_acc[step + 1].update(preds, targets, clim)
+                    self.test_acc_spatial_map[step + 1].update(preds, targets, clim)
+
+                    if self.temporal_attention:
+                        self.test_time_agg_weights[step + 1].update(time_agg_weights)
+                    self.test_var_agg_weights[step + 1].update(var_agg_weights)
+                    
+                # x_latest = preds.unsqueeze(1)
+                x = torch.cat([x[:,1:], preds.unsqueeze(1)], axis=1)
+                current_timestamps = pred_timestamps
+    
+    def ensemble_test_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
         
         if not torch.all(lead_times == lead_times[0]):
@@ -399,38 +457,69 @@ class GlobalForecastModule(LightningModule):
         
         steps = lead_times.shape[1]
         assert max(self.monitor_test_steps) - 1 <= steps, f'Invalid test steps {self.monitor_test_steps} to monitor for {steps} rollout steps'
-                
+
+        if batch_idx == 0:
+            if self.trajectory_path:
+                self.trajectories = load_trajectories_from_file(self.trajectory_path)
+            else:
+                self.trajectories = build_trajectories(self.ensemble_size, lead_times[0].cpu().numpy(), self.lead_time_candidates)
+            
+        ensembles = {}
         for step in range(steps):
+            lead_time = lead_times[0][step].item()
+            ensembles[lead_time] = {}
+            for traj in self.trajectories[lead_time]:
 
-            inputs = torch.cat((static, x), dim=2).to(dtype)
+                traj_tensor = torch.tensor(traj, device=x.device).expand(x.shape[0], -1)
+                xt = x
+                current_timestamps = input_timestamps[:, -1]
 
-            delta_time = lead_times[:,step] - lead_times[:,step - 1] if step > 0 else lead_times[:,step]
-            dts = delta_time / 100 #divide deltas_times by 100 following climaX 
-            preds, var_agg_weights, time_agg_weights = self.net.forward(inputs, dts, step, in_variables, out_variables, need_weights=True)
+                intermediate_idx = len(traj) - 1
+                while intermediate_idx > 0:
+                    intermediate_lead_time = sum(traj[:intermediate_idx])
+                    key = tuple(traj[:intermediate_idx])
+                    if intermediate_lead_time in ensembles and key in ensembles[intermediate_lead_time]:
+                        xt = ensembles[intermediate_lead_time][key]
+                        time_elapsed = traj_tensor[:,:intermediate_idx].sum(dim = 1)
+                        current_timestamps = current_timestamps + time_elapsed.cpu().numpy().astype('timedelta64[h]')
+                        break
+                    intermediate_idx -= 1
 
-            pred_timestamps = current_timestamps + delta_time.numpy().astype('timedelta64[h]')
+                for i in range(intermediate_idx, len(traj)):
+                    inputs = torch.cat((static, xt), dim=2).to(dtype)
 
-            if step + 1 in self.monitor_test_steps:
+                    delta_time = traj_tensor[:, i]
+                    dts = delta_time / 100 #divide deltas_times by 100 following climaX 
+                    preds, var_agg_weights, time_agg_weights = self.net.forward(inputs, dts, step, in_variables, out_variables, need_weights=True)
+                    xt = torch.cat([xt[:,1:], preds.unsqueeze(1)], axis=1)
+                    pred_timestamps = current_timestamps + delta_time.cpu().numpy().astype('timedelta64[h]')
+                    current_timestamps = pred_timestamps
+                
+
                 assert (output_timestamps[:, step] == pred_timestamps).all(), f'Prediction timestamps {pred_timestamps} do not match target timestamps {output_timestamps[:,step]}'
                 
+                ensembles[lead_time][tuple(traj)] = torch.cat([xt[:,1:], preds.unsqueeze(1)], axis=1)
+
+            members = torch.stack(list(ensembles[lead_time].values()), dim = 1).squeeze(2)
+            ensemble_mean = torch.mean(members, dim=1)
+
+            if step + 1 in self.monitor_test_steps:
+                
                 #set y and preds to float32 for metric calculations
-                preds = preds.float()
+                ensemble_mean = ensemble_mean.float()
                 targets = y[:, step].float().squeeze(1)
                 clim = climatology[:, step].float().squeeze(1)
                 
-                self.test_lat_weighted_mse[step + 1].update(preds, targets)
-                self.test_lat_weighted_rmse[step + 1].update(preds, targets)
-                self.test_rmse_spatial_map[step + 1].update(preds, targets)
-                self.test_lat_weighted_acc[step + 1].update(preds, targets, clim)
-                self.test_acc_spatial_map[step + 1].update(preds, targets, clim)
+                self.test_lat_weighted_mse[step + 1].update(ensemble_mean, targets)
+                self.test_lat_weighted_rmse[step + 1].update(ensemble_mean, targets)
+                self.test_rmse_spatial_map[step + 1].update(ensemble_mean, targets)
+                self.test_lat_weighted_acc[step + 1].update(ensemble_mean, targets, clim)
+                self.test_acc_spatial_map[step + 1].update(ensemble_mean, targets, clim)
 
                 if self.temporal_attention:
                     self.test_time_agg_weights[step + 1].update(time_agg_weights)
                 self.test_var_agg_weights[step + 1].update(var_agg_weights)
-                
-            # x_latest = preds.unsqueeze(1)
-            x = torch.cat([x[:,1:], preds.unsqueeze(1)], axis=1)
-            current_timestamps = pred_timestamps
+
 
     def on_test_epoch_end(self):
         results_dict = {'lead_time_hrs': [], 'out_variables': self.out_variables}
