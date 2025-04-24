@@ -1,7 +1,7 @@
 import json
 import random
-from typing import List, Dict
-from collections import defaultdict
+from typing import List, Dict, Tuple
+from functools import lru_cache
 
 def random_trajectories(N: int, targets: List[int], candidates: List[int], M: int = 10000) -> Dict[int, List[List[int]]]:
     """
@@ -46,93 +46,91 @@ def random_trajectories(N: int, targets: List[int], candidates: List[int], M: in
 
     return output
 
-def build_trajectories(N: int, targets: List[int], candidates: List[int], D: int = 3) -> Dict[int, List[List[int]]]:
-    trajectories: Dict[int, List[List[int]]] = defaultdict(list)
-    extension_cache: Dict[int, List[List[int]]] = {}
 
-    def generate_valid_extensions(diff: int, max_len: int, max_samples: int = 20) -> List[List[int]]:
-        """Generate up to `max_samples` unique combinations of ≤ max_len candidates that sum to `diff`."""
-        if max_len == 1:
-            return [[c] for c in candidates if c == diff]
+def build_trajectories(N: int, targets: List[int], candidates: List[int], D: int) -> Dict[int, List[List[int]]]:
+    """
+    For each target in `targets`, generate up to N unique trajectories
+    (lists of candidates) by extending *any* smaller-target trajectory
+    with up to D candidates whose sum exactly equals the difference.
+    If fewer than N are found at D, bump D until you either reach N
+    or exhaust all possibilities.
+    """
+    candidates = sorted(candidates)
+    min_c, max_c = candidates[0], candidates[-1]
 
-        results = []
-        seen = set()
+    @lru_cache(maxsize=None)
+    def gen_seqs(diff: int, length: int) -> List[Tuple[int, ...]]:
+        """All ordered sequences of given length summing to diff,
+        pruned by feasibility bounds."""
+        out: List[Tuple[int, ...]] = []
 
-        def backtrack(path, total):
-            if len(path) > max_len or total > diff or len(results) >= max_samples:
+        def dfs(rem: int, depth: int, seq: List[int]):
+            # prune branches impossible with remaining slots
+            if rem < depth * min_c or rem > depth * max_c:
                 return
-            if total == diff:
-                t = tuple(path)
-                if t not in seen:
-                    seen.add(t)
-                    results.append(path[:])
+            if depth == 0:
+                if rem == 0:
+                    out.append(tuple(seq))
                 return
             for c in candidates:
-                path.append(c)
-                backtrack(path, total + c)
-                path.pop()
-
-        try:
-            backtrack([], 0)
-        except RecursionError:
-            return []
-        return results
-
-    for i, tgt in enumerate(targets):
-        print(tgt)
-        seen = set()
-
-        # --- From scratch ---
-        direct_valid = generate_valid_extensions(tgt, D, max_samples=5 * N)
-        random.shuffle(direct_valid)
-        for traj in direct_valid:
-            t = tuple(traj)
-            if t not in seen:
-                seen.add(t)
-                trajectories[tgt].append(traj)
-                if len(trajectories[tgt]) >= N:
+                if c > rem:
                     break
+                seq.append(c)
+                dfs(rem - c, depth - 1, seq)
+                seq.pop()
 
-        if len(trajectories[tgt]) >= N or i == 0:
-            continue  # No need for extensions
+        dfs(diff, length, [])
+        return out
 
-        # --- Try extensions from earlier targets ---
-        attempts = 0
-        max_attempts = 100 * N
+    # Start with a “pseudo-target” 0 → one empty trajectory
+    result: Dict[int, List[List[int]]] = {0: [[]]}
 
-        while len(trajectories[tgt]) < N and attempts < max_attempts:
-            attempts += 1
-            prev_idx = random.randint(0, i - 1)
-            prev_tgt = targets[prev_idx]
-            diff = tgt - prev_tgt
+    for tgt in sorted(targets):
+        # collect all smaller-target trajectories
+        prevs = [
+            (pt, traj)
+            for pt, trajs in result.items() if pt < tgt
+            for traj in trajs
+        ]
+        if not prevs:
+            prevs = [(0, [])]
 
-            if diff < 0 or not trajectories[prev_tgt]:
-                continue
+        seen = set()
+        sols: List[List[int]] = []
+        cur_D = D
+        max_len = tgt // min_c  # max possible extension length
 
-            base = random.choice(trajectories[prev_tgt])
+        # increase D until we gather N or run out
+        while len(sols) < N and cur_D <= max_len:
+            candidates_pool: List[Tuple[int, ...]] = []
+            # build full list of all possible extensions across all bases
+            for pt, base_traj in prevs:
+                diff = tgt - pt
+                # skip impossible diffs
+                if diff <= 0:
+                    continue
+                for length in range(1, cur_D + 1):
+                    for ext in gen_seqs(diff, length):
+                        candidates_pool.append(tuple(base_traj + list(ext)))
 
-            if diff not in extension_cache:
-                extensions = generate_valid_extensions(diff, D, max_samples=10)
-                extension_cache[diff] = extensions  # cache result, even if empty
-            else:
-                extensions = extension_cache[diff]
+            random.shuffle(candidates_pool)
+            # pick unique ones until we hit N
+            for traj in candidates_pool:
+                if traj not in seen:
+                    seen.add(traj)
+                    sols.append(list(traj))
+                    if len(sols) >= N:
+                        break
 
-            if not extensions:
-                continue
+            if len(sols) < N:
+                cur_D += 1
 
-            random.shuffle(extensions)
-            for ext in extensions:
-                new_traj = base + ext
-                t = tuple(new_traj)
-                if t not in seen:
-                    seen.add(t)
-                    trajectories[tgt].append(new_traj)
-                    break  # Add one valid extension per attempt
+        result[tgt] = sols
 
-        if len(trajectories[tgt]) < N:
-            print(f"Warning: Only found {len(trajectories[tgt])} trajectories for target {tgt} (requested {N})")
+    # drop the pseudo-target
+    result.pop(0, None)
+    return result
 
-    return dict(trajectories)
 
 def homogeneous_trajectories(N: int, targets: List[int], candidates: List[int]) -> Dict[int, List[List[int]]]:
     """Build up to N homogeneous trajectories that sum to each target in targets using numbers from candidates.
@@ -182,8 +180,6 @@ def shortest_path_trajectories(N: int, targets: List[int], candidates: List[int]
     return results
 
 
-
-
 def save_trajectories_to_file(trajectories: Dict[int, List[List[int]]], filename: str) -> None:
     """Save trajectories dictionary to a file.
     
@@ -191,8 +187,10 @@ def save_trajectories_to_file(trajectories: Dict[int, List[List[int]]], filename
         trajectories: Dictionary mapping targets to lists of trajectories
         filename: Path to file to save trajectories to
     """
+    # Convert int64 keys to regular integers to avoid JSON serialization issues
+    serializable_trajectories = {int(k): v for k, v in trajectories.items()}
     with open(filename, 'w') as f:
-        json.dump(trajectories, f)
+        json.dump(serializable_trajectories, f)
 
 def load_trajectories_from_file(filename: str) -> Dict[int, List[List[int]]]:
     """Load trajectories dictionary from a file.
