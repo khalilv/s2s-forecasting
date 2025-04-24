@@ -22,7 +22,7 @@ from s2s.utils.metrics import (
 from s2s.climaX.pos_embed import interpolate_pos_embed
 from s2s.utils.plot import plot_spatial_map_with_basemap
 from s2s.utils.data_utils import WEIGHTS_DICT
-from s2s.utils.trajectory import random_trajectories, build_trajectories, homogeneous_trajectories, load_trajectories_from_file
+from s2s.utils.trajectory import random_trajectories, build_trajectories, homogeneous_trajectories, load_trajectories_from_file, shortest_path_trajectories, save_trajectories_to_file
 
 class GlobalForecastModule(LightningModule):
     """Lightning module for global forecasting with the ClimaX model.
@@ -168,11 +168,19 @@ class GlobalForecastModule(LightningModule):
         
         self.test_lat_weighted_mse, self.test_lat_weighted_rmse, self.test_lat_weighted_acc, self.test_acc_spatial_map, self.test_rmse_spatial_map, self.test_time_agg_weights, self.test_var_agg_weights = {}, {}, {}, {}, {}, {}, {}
         for step in self.monitor_test_steps:
-            self.test_lat_weighted_mse[step] = lat_weighted_mse(self.out_variables, self.lat, var_weights, suffix='norm')        
-            self.test_rmse_spatial_map[step] = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
-            self.test_lat_weighted_rmse[step] = lat_weighted_rmse(self.out_variables, self.lat, denormalize)
-            self.test_lat_weighted_acc[step] = lat_weighted_acc(self.out_variables, self.lat, denormalize)
-            self.test_acc_spatial_map[step] = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
+            if self.ensemble_inference:
+                suffixes = [f'member_{i}' for i in range(self.ensemble_size)] + ['']
+                self.test_lat_weighted_mse[step] = [lat_weighted_mse(self.out_variables, self.lat, var_weights, suffix=f'norm_{suffix}') for suffix in suffixes]       
+                self.test_rmse_spatial_map[step] = [rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize, suffix=suffix) for suffix in suffixes]
+                self.test_lat_weighted_rmse[step] = [lat_weighted_rmse(self.out_variables, self.lat, denormalize, suffix=suffix) for suffix in suffixes]
+                self.test_lat_weighted_acc[step] = [lat_weighted_acc(self.out_variables, self.lat, denormalize, suffix=suffix) for suffix in suffixes]
+                self.test_acc_spatial_map[step] = [acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize, suffix=suffix) for suffix in suffixes]
+            else:
+                self.test_lat_weighted_mse[step] = lat_weighted_mse(self.out_variables, self.lat, var_weights, suffix='norm')        
+                self.test_rmse_spatial_map[step] = rmse_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
+                self.test_lat_weighted_rmse[step] = lat_weighted_rmse(self.out_variables, self.lat, denormalize)
+                self.test_lat_weighted_acc[step] = lat_weighted_acc(self.out_variables, self.lat, denormalize)
+                self.test_acc_spatial_map[step] = acc_spatial_map(self.out_variables, (len(self.lat), len(self.lon)), denormalize)
             self.test_time_agg_weights[step] = aggregate_attn_weights(len(self.lat) * len(self.lon) // self.patch_size**2, 1, len(self.history), suffix='time')
             self.test_var_agg_weights[step] = aggregate_attn_weights(len(self.lat) * len(self.lon) // self.patch_size**2, 1, len(self.out_variables), suffix='var')
 
@@ -223,13 +231,23 @@ class GlobalForecastModule(LightningModule):
     def setup(self, stage: str):
         self.denormalization.to(device=self.device, dtype=self.dtype)
         for step in self.monitor_test_steps:
-            self.test_lat_weighted_mse[step].to(self.device)
-            self.test_lat_weighted_acc[step].to(self.device)
-            self.test_lat_weighted_rmse[step].to(self.device)
-            self.test_rmse_spatial_map[step].to(self.device)
-            self.test_acc_spatial_map[step].to(self.device)
-            self.test_time_agg_weights[step].to(self.device)
-            self.test_var_agg_weights[step].to(self.device)
+            if self.ensemble_inference:
+                for i in range(self.ensemble_size + 1):
+                    self.test_lat_weighted_mse[step][i].to(self.device)
+                    self.test_lat_weighted_acc[step][i].to(self.device)
+                    self.test_lat_weighted_rmse[step][i].to(self.device)
+                    self.test_rmse_spatial_map[step][i].to(self.device)
+                    self.test_acc_spatial_map[step][i].to(self.device)
+                    self.test_time_agg_weights[step][i].to(self.device)
+                    self.test_var_agg_weights[step][i].to(self.device)
+            else:
+                self.test_lat_weighted_mse[step].to(self.device)
+                self.test_lat_weighted_acc[step].to(self.device)
+                self.test_lat_weighted_rmse[step].to(self.device)
+                self.test_rmse_spatial_map[step].to(self.device)
+                self.test_acc_spatial_map[step].to(self.device)
+                self.test_time_agg_weights[step].to(self.device)
+                self.test_var_agg_weights[step].to(self.device)
        
     def set_lat2d(self, normalize: bool):
         self.lat2d = torch.from_numpy(np.tile(self.lat, (self.img_size[1], 1)).T).unsqueeze(0) #climaX includes 2d latitude as an input field
@@ -504,17 +522,25 @@ class GlobalForecastModule(LightningModule):
             ensemble_mean = torch.mean(members, dim=1)
 
             if step + 1 in self.monitor_test_steps:
-                
-                #set y and preds to float32 for metric calculations
-                ensemble_mean = ensemble_mean.float()
                 targets = y[:, step].float().squeeze(1)
                 clim = climatology[:, step].float().squeeze(1)
                 
-                self.test_lat_weighted_mse[step + 1].update(ensemble_mean, targets)
-                self.test_lat_weighted_rmse[step + 1].update(ensemble_mean, targets)
-                self.test_rmse_spatial_map[step + 1].update(ensemble_mean, targets)
-                self.test_lat_weighted_acc[step + 1].update(ensemble_mean, targets, clim)
-                self.test_acc_spatial_map[step + 1].update(ensemble_mean, targets, clim)
+                for member_idx in range(members.shape[1]):
+                    member = members[:, member_idx]
+                    member = member.float()
+                    self.test_lat_weighted_mse[step + 1][member_idx].update(member, targets)
+                    self.test_lat_weighted_rmse[step + 1][member_idx].update(member, targets)
+                    self.test_rmse_spatial_map[step + 1][member_idx].update(member, targets)
+                    self.test_lat_weighted_acc[step + 1][member_idx].update(member, targets, clim)
+                    self.test_acc_spatial_map[step + 1][member_idx].update(member, targets, clim)
+
+                #member mean is always last
+                ensemble_mean = ensemble_mean.float()
+                self.test_lat_weighted_mse[step + 1][-1].update(ensemble_mean, targets)
+                self.test_lat_weighted_rmse[step + 1][-1].update(ensemble_mean, targets)
+                self.test_rmse_spatial_map[step + 1][-1].update(ensemble_mean, targets)
+                self.test_lat_weighted_acc[step + 1][-1].update(ensemble_mean, targets, clim)
+                self.test_acc_spatial_map[step + 1][-1].update(ensemble_mean, targets, clim)
 
                 if self.temporal_attention:
                     self.test_time_agg_weights[step + 1].update(time_agg_weights)
@@ -527,11 +553,20 @@ class GlobalForecastModule(LightningModule):
             lead_time = int(step*self.predict_step_size*self.hrs_each_step) #current forecast lead time in hours
             results_dict['lead_time_hrs'].append(lead_time)
             suffix = f'{lead_time}hrs'
-            w_mse_norm = self.test_lat_weighted_mse[step].compute()
-            w_rmse = self.test_lat_weighted_rmse[step].compute()
-            w_acc = self.test_lat_weighted_acc[step].compute()
-            rmse_spatial_maps = self.test_rmse_spatial_map[step].compute()
-            acc_spatial_maps = self.test_acc_spatial_map[step].compute()
+            if self.ensemble_inference:
+                members = list(range(self.ensemble_size + 1))
+                w_mse_norm = {k: v for member_idx in members for k, v in self.test_lat_weighted_mse[step][member_idx].compute().items()}
+                w_rmse = {k: v for member_idx in members for k, v in self.test_lat_weighted_rmse[step][member_idx].compute().items()}
+                w_acc = {k: v for member_idx in members for k, v in self.test_lat_weighted_acc[step][member_idx].compute().items()}
+                rmse_spatial_maps = {k: v for member_idx in members for k, v in self.test_rmse_spatial_map[step][member_idx].compute().items()}
+                acc_spatial_maps = {k: v for member_idx in members for k, v in self.test_acc_spatial_map[step][member_idx].compute().items()}
+            else:
+                w_mse_norm = self.test_lat_weighted_mse[step].compute()
+                w_rmse = self.test_lat_weighted_rmse[step].compute()
+                w_acc = self.test_lat_weighted_acc[step].compute()
+                rmse_spatial_maps = self.test_rmse_spatial_map[step].compute()
+                acc_spatial_maps = self.test_acc_spatial_map[step].compute()
+                
             var_agg_attn_weights = self.test_var_agg_weights[step].compute()
             time_attn_weights = self.test_time_agg_weights[step].compute() if self.temporal_attention else {}
 
@@ -572,17 +607,29 @@ class GlobalForecastModule(LightningModule):
                 if k not in results_dict:
                     results_dict[k] = []
                 results_dict[k].append(attn_weights_dict[k].float().cpu().numpy())
-
-            self.test_lat_weighted_mse[step].reset()
-            self.test_lat_weighted_rmse[step].reset()
-            self.test_lat_weighted_acc[step].reset()
-            self.test_acc_spatial_map[step].reset()
-            self.test_rmse_spatial_map[step].reset()
-            self.test_time_agg_weights[step].reset()
-            self.test_var_agg_weights[step].reset()
+            
+            if self.ensemble_inference:
+                for member_idx in range(self.ensemble_size + 1):
+                    self.test_lat_weighted_mse[step][member_idx].reset()
+                    self.test_lat_weighted_rmse[step][member_idx].reset()
+                    self.test_lat_weighted_acc[step][member_idx].reset()
+                    self.test_acc_spatial_map[step][member_idx].reset()
+                    self.test_rmse_spatial_map[step][member_idx].reset()
+                    self.test_time_agg_weights[step][member_idx].reset()
+                    self.test_var_agg_weights[step][member_idx].reset()
+            else:
+                self.test_lat_weighted_mse[step].reset()
+                self.test_lat_weighted_rmse[step].reset()
+                self.test_lat_weighted_acc[step].reset()
+                self.test_acc_spatial_map[step].reset()
+                self.test_rmse_spatial_map[step].reset()
+                self.test_time_agg_weights[step].reset()
+                self.test_var_agg_weights[step].reset()
 
         
         np.savez(f'{self.logger.log_dir}/results.npz', **results_dict)
+        if self.ensemble_inference:
+            save_trajectories_to_file(self.trajectories, f'{self.logger.log_dir}/trajectories.json')
 
     #optimizer definition - will be used to optimize the network based
     def configure_optimizers(self):
