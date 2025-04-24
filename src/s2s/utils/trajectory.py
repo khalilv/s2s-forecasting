@@ -1,9 +1,9 @@
+import json
 import random
 from typing import List, Dict
-import json
-from collections import deque
+from collections import defaultdict
 
-def random_trajectories(N: int, targets: List[int], candidates: List[int], M: int = 1000) -> Dict[int, List[List[int]]]:
+def random_trajectories(N: int, targets: List[int], candidates: List[int], M: int = 10000) -> Dict[int, List[List[int]]]:
     """
     Generate up to N random trajectories for each target in targets using numbers from candidates.
 
@@ -46,69 +46,93 @@ def random_trajectories(N: int, targets: List[int], candidates: List[int], M: in
 
     return output
 
-def build_trajectories(N: int, targets: List[int], candidates: List[int]) -> Dict[int, List[List[int]]]:
-    """Build up to N trajectories that sum to each target in targets using numbers from candidates. 
-        Each solution will be built from a random previous solution by adding one random candidate.
-    
-    Args:
-        N: Maximum number of trajectories to generate per target
-        targets: List of targets to generate trajectories for
-        candidates: List of integers to build trajectories from
-        
-    Returns:
-        Dictionary mapping each target to a list of trajectories that sum to it
-    """
-    candidates = sorted(set(candidates))
-    # dp[t] will hold our finalized list of trajectories for sum = t
-    dp: Dict[int, List[List[int]]] = {0: [[]]}
-    output: Dict[int, List[List[int]]] = {}
+def build_trajectories(N: int, targets: List[int], candidates: List[int], D: int = 3) -> Dict[int, List[List[int]]]:
+    trajectories: Dict[int, List[List[int]]] = defaultdict(list)
+    extension_cache: Dict[int, List[List[int]]] = {}
 
-    for t in targets:
-        found = set()
+    def generate_valid_extensions(diff: int, max_len: int, max_samples: int = 20) -> List[List[int]]:
+        """Generate up to `max_samples` unique combinations of ≤ max_len candidates that sum to `diff`."""
+        if max_len == 1:
+            return [[c] for c in candidates if c == diff]
 
-        # --- 1‑step pass: extend dp[t-c] by one candidate ---
-        for c in random.sample(candidates, len(candidates)):
-            prev_t = t - c
-            if prev_t < 0 or prev_t not in dp:
-                continue
-            for prefix in random.sample(dp[prev_t], len(dp[prev_t])):
-                found.add(tuple(prefix + [c]))
-                if len(found) >= N:
+        results = []
+        seen = set()
+
+        def backtrack(path, total):
+            if len(path) > max_len or total > diff or len(results) >= max_samples:
+                return
+            if total == diff:
+                t = tuple(path)
+                if t not in seen:
+                    seen.add(t)
+                    results.append(path[:])
+                return
+            for c in candidates:
+                path.append(c)
+                backtrack(path, total + c)
+                path.pop()
+
+        try:
+            backtrack([], 0)
+        except RecursionError:
+            return []
+        return results
+
+    for i, tgt in enumerate(targets):
+        print(tgt)
+        seen = set()
+
+        # --- From scratch ---
+        direct_valid = generate_valid_extensions(tgt, D, max_samples=5 * N)
+        random.shuffle(direct_valid)
+        for traj in direct_valid:
+            t = tuple(traj)
+            if t not in seen:
+                seen.add(t)
+                trajectories[tgt].append(traj)
+                if len(trajectories[tgt]) >= N:
                     break
-            if len(found) >= N:
-                break
 
-        # --- BFS fallback if we still need more ---
-        if len(found) < N:
-            queue = deque([([], 0)])  # (current_sequence, current_sum)
-            seen = set()              # to avoid revisiting the same prefix
-            while queue and len(found) < N:
-                seq, s = queue.popleft()
-                for c in random.sample(candidates, len(candidates)):
-                    s2 = s + c
-                    if s2 > t:
-                        continue
-                    new_seq = seq + [c]
-                    tup = tuple(new_seq)
-                    if tup in seen:
-                        continue
-                    seen.add(tup)
+        if len(trajectories[tgt]) >= N or i == 0:
+            continue  # No need for extensions
 
-                    if s2 == t:
-                        found.add(tup)
-                        if len(found) >= N:
-                            break
-                    else:
-                        queue.append((new_seq, s2))
-                # end for c
-            # end while queue
+        # --- Try extensions from earlier targets ---
+        attempts = 0
+        max_attempts = 100 * N
 
-        # finalize for this target
-        chosen = [list(traj) for traj in found][:N]
-        dp[t] = chosen
-        output[t] = chosen
+        while len(trajectories[tgt]) < N and attempts < max_attempts:
+            attempts += 1
+            prev_idx = random.randint(0, i - 1)
+            prev_tgt = targets[prev_idx]
+            diff = tgt - prev_tgt
 
-    return output
+            if diff < 0 or not trajectories[prev_tgt]:
+                continue
+
+            base = random.choice(trajectories[prev_tgt])
+
+            if diff not in extension_cache:
+                extensions = generate_valid_extensions(diff, D, max_samples=10)
+                extension_cache[diff] = extensions  # cache result, even if empty
+            else:
+                extensions = extension_cache[diff]
+
+            if not extensions:
+                continue
+
+            random.shuffle(extensions)
+            for ext in extensions:
+                new_traj = base + ext
+                t = tuple(new_traj)
+                if t not in seen:
+                    seen.add(t)
+                    trajectories[tgt].append(new_traj)
+                    break  # Add one valid extension per attempt
+
+        if len(trajectories[tgt]) < N:
+            print(f"Warning: Only found {len(trajectories[tgt])} trajectories for target {tgt} (requested {N})")
+
+    return dict(trajectories)
 
 def homogeneous_trajectories(N: int, targets: List[int], candidates: List[int]) -> Dict[int, List[List[int]]]:
     """Build up to N homogeneous trajectories that sum to each target in targets using numbers from candidates.
@@ -135,6 +159,30 @@ def homogeneous_trajectories(N: int, targets: List[int], candidates: List[int]) 
                 break
         output[t] = combos
     return output
+
+def shortest_path_trajectories(N: int, targets: List[int], candidates: List[int]) -> Dict[int, List[List[int]]]:
+    candidates = sorted(candidates, reverse=True)  # Prioritize larger steps
+    results = {}
+
+    def dfs(path, remaining, all_paths):
+        if remaining == 0:
+            all_paths.append(path)
+            return
+        for c in candidates:
+            if c <= remaining:
+                dfs(path + [c], remaining - c, all_paths)
+            if len(all_paths) >= N:
+                return
+
+    for target in targets:
+        all_paths = []
+        dfs([], target, all_paths)
+        results[target] = all_paths[:N]
+
+    return results
+
+
+
 
 def save_trajectories_to_file(trajectories: Dict[int, List[List[int]]], filename: str) -> None:
     """Save trajectories dictionary to a file.
