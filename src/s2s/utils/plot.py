@@ -72,6 +72,78 @@ def plot_aggregated_variables(npz_files: list, labels: list, variables: list, x_
         plt.close()
     else:
         plt.show()
+
+def plot_ensemble_members(npz_file: str, members: list, labels: list, variables: list, x_key: str, x_label: str = None, y_label: str = None, titles: list = None, output_filename: str = None, clim_filename = None):
+    """Plot multiple variables from multiple npz files with corresponding labels.
+    
+    Args:
+        npz_files (list): List of paths to npz files
+        labels (list): List of labels corresponding to each npz file
+        variables (list): List of variable names to plot
+        x_key (str): Key for x-axis values in npz files
+        x_label (str, optional): Label for x-axis. If None, uses x_key
+        y_label (str, optional): Label for y-axis. If None, uses variable names
+        titles (list, optional): List of plot titles. If None, generates default titles
+        output_filename (str, optional): Absolute filename to save the plot as PNG
+        clim_filename (str, optional): If provided include climatology errors on plots
+
+    """
+    assert len(members) == len(labels), "Error: members list and labels must match in length"
+    assert len(variables) <= 8, "Error: maximum number of variablesand is 8"
+    
+    # Define subplot layout based on number of variables
+    layout_map = {
+        1: (1, 1),
+        2: (1, 2),
+        3: (1, 3),
+        4: (2, 2),
+        5: (2, 3),
+        6: (3, 3),
+        7: (3, 4),
+        8: (4, 4)
+    }
+    
+    nrows, ncols = layout_map[len(variables)]
+    fig = plt.figure(figsize=(8*ncols, 6*nrows))
+    
+    # Generate colors for each npz file that will be consistent across subplots
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(labels)-1))
+    colors = np.vstack([colors, [0, 0, 0, 1]])  # Add black as the last color
+
+    if clim_filename:
+        clim = np.load(clim_filename)
+    
+    data = np.load(npz_file)
+
+    for idx, variable in enumerate(variables):
+        ax = plt.subplot(nrows, ncols, idx + 1)
+        
+        for color_idx, (member, label) in enumerate(zip(members, labels)):
+            
+            member_variable = f'{variable}_{member}' if member else variable
+            assert member_variable in data, f"Error: variable {member_variable} not found in {npz_file}"
+            assert x_key in data, f"Error: x-axis key {x_key} not found in {npz_file}"
+            assert len(data[member_variable].shape) == 1, f'Error: variable {member_variable} with shape {data[member_variable].shape} must be 1 dimensional'
+            assert len(data[x_key].shape) == 1, f'Error: x-axis key {x_key} with shape {data[x_key].shape} must be 1 dimensional'
+            
+            ax.plot(data[x_key], data[member_variable], label=label, marker='.', color=colors[color_idx])
+
+        if clim_filename and variable in clim:
+            ax.axhline(y=clim[variable], color='black', linestyle='--', label='Climatology')
+
+        ax.set_xlabel(x_label if x_label else x_key)
+        ax.set_ylabel(y_label if y_label else variable)
+        ax.set_title(titles[idx] if titles else f'{y_label if y_label else variable} vs {x_label if x_label else x_key}')
+        ax.grid(True)
+        # ax.legend()
+    
+    plt.tight_layout(h_pad=2.0)  # Increase vertical spacing between rows
+        
+    if output_filename:
+        plt.savefig(output_filename, dpi=300, bbox_inches='tight')
+        plt.close()
+    else:
+        plt.show()
     
 def plot_attn_weights(npz_file: str, key: str, title: str, x_ticks: list, x_label: str, output_filename: str = None):
     """Plot attention weights for multiple variables across history timesteps.
@@ -87,8 +159,8 @@ def plot_attn_weights(npz_file: str, key: str, title: str, x_ticks: list, x_labe
     data = np.load(npz_file)
     
     attn_weights = data[key]
-    attn_weights_mean = attn_weights.mean(axis=(0,1,2,3))
-    attn_weights_std = attn_weights.std(axis=(0,1,2,3))
+    attn_weights_mean = attn_weights.mean(axis=(0,1,2))
+    attn_weights_std = attn_weights.std(axis=(0,1,2))
    
     fig, ax = plt.subplots(figsize=(12, 6))
     

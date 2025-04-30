@@ -21,7 +21,7 @@ trainer:
   sync_batchnorm: true
   enable_checkpointing: true
 
-  #accumulate_grad_batches: 16
+  accumulate_grad_batches: 2
   # log_every_n_steps: 3
   gradient_clip_val: 5.0
 
@@ -86,7 +86,7 @@ model:
   max_steps: 50000
   warmup_start_lr: 1e-8
   eta_min: 1e-8
-  pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[1d,2d,3d,4d]/checkpoints/epoch_020.ckpt"
+  pretrained_path: "/glade/derecho/scratch/kvirji/s2s-forecasting/pretrained_weights/climaX-5.625-cmip6.ckpt"
   img_size: [32, 64]
   patch_size: 2
   embed_dim: 1024

@@ -101,6 +101,8 @@ class GlobalForecastModule(LightningModule):
         self.lat = None
         self.lon = None
         self.plot_variables = []
+        self.save_outputs = False
+        self.output_dict = {}
         if self.monitor_val_step:
             assert self.monitor_val_step > 0, 'Validation step to monitor must be > 0'
         else:
@@ -426,7 +428,11 @@ class GlobalForecastModule(LightningModule):
             
             steps = lead_times.shape[1]
             assert max(self.monitor_test_steps) - 1 <= steps, f'Invalid test steps {self.monitor_test_steps} to monitor for {steps} rollout steps'
-                    
+            
+            if self.save_outputs:
+                for start_date in input_timestamps[:, -1]: 
+                    self.output_dict[str(start_date)] = {'target_date': [], 'preds': []}
+
             for step in range(steps):
 
                 inputs = torch.cat((static, x), dim=2).to(dtype)
@@ -454,10 +460,20 @@ class GlobalForecastModule(LightningModule):
                     if self.temporal_attention:
                         self.test_time_agg_weights[step + 1].update(time_agg_weights)
                     self.test_var_agg_weights[step + 1].update(var_agg_weights)
-                    
+                
+                if self.save_outputs:
+                    for start_date, end_date, pred in zip(input_timestamps[:, -1], output_timestamps[:, step], preds.to('cpu')):
+                        self.output_dict[str(start_date)]['target_date'].append(str(end_date))
+                        self.output_dict[str(start_date)]['preds'].append(pred)
+
                 # x_latest = preds.unsqueeze(1)
                 x = torch.cat([x[:,1:], preds.unsqueeze(1)], axis=1)
                 current_timestamps = pred_timestamps
+        
+        if self.save_outputs:
+            for start_date in input_timestamps[:, -1]:
+                self.output_dict[str(start_date)]['preds'] = torch.stack(self.output_dict[str(start_date)]['preds'], dim=0)
+
     
     def ensemble_test_step(self, batch: Any, batch_idx: int):
         x, static, y, climatology, lead_times, variables, static_variables, out_variables, input_timestamps, output_timestamps, _, _ = batch
@@ -625,6 +641,9 @@ class GlobalForecastModule(LightningModule):
                 self.test_rmse_spatial_map[step].reset()
                 self.test_time_agg_weights[step].reset()
                 self.test_var_agg_weights[step].reset()
+
+        if self.save_outputs:
+            np.savez(f'{self.logger.log_dir}/outputs.npz', **self.output_dict)
 
         
         np.savez(f'{self.logger.log_dir}/results.npz', **results_dict)
