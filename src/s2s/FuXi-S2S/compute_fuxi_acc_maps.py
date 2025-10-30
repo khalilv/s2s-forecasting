@@ -12,13 +12,13 @@ Processes forecasts for 2017-2022 across all lead times (1-215 days) and ensembl
 
 import os
 import glob
-from pathlib import Path
 from typing import Optional, List, Dict
 import numpy as np
 import pandas as pd
 import xarray as xr
 from tqdm import tqdm
 import torch
+import matplotlib.colors as mcolors
 from s2s.utils.metrics import acc_spatial_map
 from s2s.utils.plot import plot_spatial_map_with_basemap
 
@@ -421,6 +421,125 @@ def compute_acc_spatial_maps(
     return acc_maps
 
 
+def save_acc_spatial_maps(
+    acc_maps: Dict[str, np.ndarray],
+    lat: np.ndarray,
+    lon: np.ndarray,
+    lead_time_days: int,
+    output_dir: str,
+    init_times: Optional[pd.DatetimeIndex] = None,
+    year_range: Optional[tuple] = None,
+    months: Optional[List[int]] = None,
+    verbose: bool = True
+) -> str:
+    """
+    Save ACC spatial maps to a netCDF file for later analysis.
+
+    Parameters
+    ----------
+    acc_maps : Dict[str, np.ndarray]
+        Dictionary with channel names as keys and ACC spatial maps (lat, lon) as values
+    lat : np.ndarray
+        Latitude values
+    lon : np.ndarray
+        Longitude values
+    lead_time_days : int
+        Lead time in days for the forecast
+    output_dir : str
+        Directory to save the netCDF file
+    init_times : pd.DatetimeIndex, optional
+        Initialization times that were used to compute the ACC maps
+    year_range : tuple, optional
+        (start_year, end_year) for metadata
+    months : List[int], optional
+        List of months used for filtering (for metadata)
+    verbose : bool
+        Whether to print progress information
+
+    Returns
+    -------
+    str
+        Path to the saved netCDF file
+    """
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+        if verbose:
+            print(f"Created output directory: {output_dir}")
+
+    # Convert acc_maps dict to xarray Dataset
+    data_vars = {}
+    for channel, acc_map in acc_maps.items():
+        data_vars[f'acc_{channel}'] = (['lat', 'lon'], acc_map)
+
+    # Add initialization times as a data variable if provided
+    if init_times is not None:
+        data_vars['init_times'] = (['init_time'], init_times.values)
+
+    # Create the dataset
+    coords = {
+        'lat': lat,
+        'lon': lon,
+    }
+
+    # Add init_time as a coordinate if provided
+    if init_times is not None:
+        coords['init_time'] = init_times
+
+    ds = xr.Dataset(
+        data_vars=data_vars,
+        coords=coords
+    )
+
+    # Add metadata attributes
+    ds.attrs['lead_time_days'] = lead_time_days
+    ds.attrs['description'] = 'Anomaly Correlation Coefficient (ACC) spatial maps for FuXi forecasts'
+    ds.attrs['created'] = pd.Timestamp.now().isoformat()
+
+    if year_range:
+        ds.attrs['year_range'] = f"{year_range[0]}-{year_range[1]}"
+
+    if months:
+        month_names = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun',
+                       7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
+        month_str = ','.join([month_names[m] for m in sorted(months)])
+        ds.attrs['months'] = month_str
+        ds.attrs['months_filter'] = str(months)
+
+    if init_times is not None:
+        ds.attrs['n_init_times'] = len(init_times)
+
+    # Build filename
+    month_suffix = ''
+    if months:
+        if months == [12, 1, 2]:
+            month_suffix = '_DJF'
+        elif months == [3, 4, 5]:
+            month_suffix = '_MAM'
+        elif months == [6, 7, 8]:
+            month_suffix = '_JJA'
+        elif months == [9, 10, 11]:
+            month_suffix = '_SON'
+        else:
+            month_suffix = f"_months{''.join(map(str, sorted(months)))}"
+
+    filename = f"acc_spatial_lead{lead_time_days:03d}{month_suffix}.nc"
+    filepath = os.path.join(output_dir, filename)
+
+    # Save to netCDF
+    ds.to_netcdf(filepath)
+
+    if verbose:
+        print(f"  Saved ACC maps to: {filepath}")
+        print(f"    Variables: {list(data_vars.keys())}")
+        print(f"    Lead time: {lead_time_days} days")
+        if months:
+            print(f"    Months: {month_str}")
+        if init_times is not None:
+            print(f"    Number of init times: {len(init_times)}")
+
+    return filepath
+
+
 def plot_acc_spatial_maps(
     acc_maps: Dict[str, np.ndarray],
     lat: np.ndarray,
@@ -451,6 +570,13 @@ def plot_acc_spatial_maps(
         os.makedirs(output_dir, exist_ok=True)
         if verbose:
             print(f"Created output directory: {output_dir}")
+
+    # Create custom discrete colormap for ACC
+    acc_colors = ['#FFFECB', '#f5ff63', '#beff31', '#2ae400', '#1c9800',
+                  '#136600', '#f74212', '#cf0724', '#9e051b', '#6c0412']
+    acc_cmap = mcolors.ListedColormap(acc_colors)
+    acc_bounds = np.arange(0.0, 1.1, 0.1)  # [0.0, 0.1, 0.2, ..., 1.0]
+    acc_norm = mcolors.BoundaryNorm(acc_bounds, acc_cmap.N)
 
     # Compute latitude weights (cos(lat) normalized)
     lat_rad = np.deg2rad(lat)
@@ -485,7 +611,8 @@ def plot_acc_spatial_maps(
             title=title,
             filename=filename,
             zlabel='Anomaly Correlation Coefficient',
-            cMap='RdBu_r',  # Red-Blue colormap (red for positive correlation)
+            cMap=acc_cmap,
+            norm=acc_norm,
             vmin=0.0,
             vmax=1.0
         )
@@ -705,14 +832,18 @@ if __name__ == "__main__":
     # Paths
     ERA5_DAILY_PATH = '/glade/derecho/scratch/kvirji/DATA/era5_daily/1959-2023_01_10-1h-240x121_equiangular_with_poles_conservative.zarr'
     ERA5_CLIM_PATH = '/glade/derecho/scratch/kvirji/DATA/era5_climatology/1990-2017-daily_clim_daily_mean_61_dw_240x121_equiangular_with_poles_conservative.zarr'
-    OUTPUT_DIR = '/glade/derecho/scratch/kvirji/s2s-forecasting/plots/fuxi_acc_spatial_maps_djf'
+
+    # Output directories
+    BASE_OUTPUT_DIR = '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/fuxi_acc_spatial_maps_DJF'
+    ACC_MAPS_DIR = os.path.join(BASE_OUTPUT_DIR, 'acc_maps')  # For intermediate .nc files
+    PLOTS_DIR = os.path.join(BASE_OUTPUT_DIR, 'plots')  # For plots
 
     # Parameters
-    YEAR_RANGE = (2017, 2022)  # All years 2017-2022
+    YEAR_RANGE = (2017, 2023)  # All years 2017-2022
     MEMBERS = None  # All 51 ensemble members (set to None for all)
     LEAD_TIMES = list(range(1, 216))  # Lead times 1-215 days
     CHANNELS = ['t2m']  # 2-meter temperature
-    MONTHS = None  # All months (set to None to use all, or [12, 1, 2] for DJF)
+    MONTHS = [12, 1, 2]  # All months (set to None to use all, or [12, 1, 2] for DJF)
 
     # Memory estimate
     print("\n" + "="*80)
@@ -796,6 +927,20 @@ if __name__ == "__main__":
             verbose=False
         )
 
+        # Save ACC spatial maps to netCDF files
+        print(f"  Saving ACC spatial maps to netCDF...")
+        save_acc_spatial_maps(
+            acc_maps=acc_maps,
+            lat=forecasts_filtered.lat.values,
+            lon=forecasts_filtered.lon.values,
+            lead_time_days=lead_time_days,
+            output_dir=ACC_MAPS_DIR,
+            init_times=pd.DatetimeIndex(forecasts_filtered.init_time.values),
+            year_range=YEAR_RANGE,
+            months=MONTHS,
+            verbose=False
+        )
+
         # Plot ACC spatial maps
         print(f"  Plotting and saving...")
         # Save all plots in the same directory (filename already includes lead time)
@@ -804,7 +949,7 @@ if __name__ == "__main__":
             lat=forecasts_filtered.lat.values,
             lon=forecasts_filtered.lon.values,
             lead_time_days=lead_time_days,
-            output_dir=OUTPUT_DIR,
+            output_dir=PLOTS_DIR,
             verbose=False
         )
 
@@ -819,7 +964,9 @@ if __name__ == "__main__":
             print(f"  {channel}: Lat-weighted mean ACC = {lat_weighted_mean_acc:.3f}")
 
     print("\n" + "="*80)
-    print("Done! ACC spatial maps saved to:")
-    print(f"  {OUTPUT_DIR}/")
-    print(f"  Files: acc_spatial_t2m_*.png")
+    print("Done! Results saved to:")
+    print(f"  ACC maps (netCDF): {ACC_MAPS_DIR}/")
+    print(f"    Files: acc_spatial_lead*.nc")
+    print(f"  Plots (PNG): {PLOTS_DIR}/")
+    print(f"    Files: acc_spatial_*.png")
     print("="*80)

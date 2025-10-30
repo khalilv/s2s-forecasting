@@ -184,7 +184,7 @@ def plot_attn_weights(npz_file: str, key: str, title: str, x_ticks: list, x_labe
     else:
         plt.show()
 
-def plot_spatial_map_with_basemap(data: np.ndarray, lon: np.ndarray, lat: np.ndarray, title: str = None, filename: str = None, zlabel: str = "", cMap: str = 'viridis', vmin: float = None, vmax: float = None):
+def plot_spatial_map_with_basemap(data: np.ndarray, lon: np.ndarray, lat: np.ndarray, title: str = None, filename: str = None, zlabel: str = "", cMap: str = 'viridis', vmin: float = None, vmax: float = None, norm=None):
     """
     Plot a spatial map of 2D data with latitude and longitude axes using Basemap, without normalization and with automatic color intervals.
 
@@ -196,8 +196,9 @@ def plot_spatial_map_with_basemap(data: np.ndarray, lon: np.ndarray, lat: np.nda
         filename (str, optional): Filename to save the plot as PNG
         zlabel (str, optional): Label for colorbar
         cMap (str, optional): Colormap to use
-        vmin (float, optional): Minimum value for colorbar
-        vmax (float, optional): Maximum value for colorbar
+        vmin (float, optional): Minimum value for colorbar (ignored if norm is provided)
+        vmax (float, optional): Maximum value for colorbar (ignored if norm is provided)
+        norm (matplotlib.colors.Normalize, optional): Normalization instance for discrete colormaps
     """
     _, ax = plt.subplots(figsize=(16, 6))
 
@@ -211,7 +212,11 @@ def plot_spatial_map_with_basemap(data: np.ndarray, lon: np.ndarray, lat: np.nda
     data = np.roll(data, int(len(lon) / 2), axis=1)
 
     x, y = np.meshgrid(lon, lat)
-    im = m.pcolormesh(x, y, data, cmap=cMap, shading='auto', latlon=True, vmin=vmin, vmax=vmax)
+    # If norm is provided, use it; otherwise use vmin/vmax
+    if norm is not None:
+        im = m.pcolormesh(x, y, data, cmap=cMap, shading='auto', latlon=True, norm=norm)
+    else:
+        im = m.pcolormesh(x, y, data, cmap=cMap, shading='auto', latlon=True, vmin=vmin, vmax=vmax)
     
     cbar = m.colorbar(im, location='bottom', pad=0.03, fraction=0.04)
     cbar.ax.tick_params(labelsize=10)
