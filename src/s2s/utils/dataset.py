@@ -8,21 +8,32 @@ import torch
 from torch.utils.data import IterableDataset
 
 class ZarrReader(IterableDataset):
-    """Dataset for loading zarr files.
+    """IterableDataset for loading preprocessed zarr files with distributed training support.
+
+    Handles automatic data splitting across distributed ranks and DataLoader workers,
+    year grouping for efficiency, and carryover mechanism to preserve temporal continuity.
+    Validates spatial coordinate alignment when using climatology.
 
     Args:
-        file_list (list): List of zarr file paths.
-        static_variable_file (str): Path to static variable file.
-        in_variables (list): List of input variables.
-        static_variables (list): List of static variables.
-        out_variables (list): List of output variables.
-        climatology_file (str): Filepath to climatology (optional)
-        predict_size (int, optional): Length of outputs. Defaults to 1.
-        predict_step (int, optional): Step size between outputs. Defaults to 1.
-        history (list, optional): List of history elements to include in input. 
-            If provided must all be negative integers. Defaults to [] (current timestamp).
-        hrs_each_step (int, optional): Hours between consecutive steps. Defaults to 1.
-        shuffle (bool, optional): Whether to shuffle the file list. Defaults to False.
+        file_list (list): List of zarr file paths to load.
+        static_variable_file (str): Path to static variables zarr file.
+        in_variables (list): Input variable names.
+        static_variables (list): Static variable names.
+        out_variables (list): Output variable names.
+        climatology_file (str, optional): Path to climatology zarr. Spatial grids must match data.
+        predict_size (int, optional): Number of forecast timesteps. Defaults to 1.
+        predict_step (int, optional): Spacing between forecast timesteps (e.g., 6 = every 6 hours). Defaults to 1.
+        history (list, optional): Negative integers for historical timesteps (e.g., [-3, -2, -1]). Defaults to [].
+        hrs_each_step (int, optional): Hours between consecutive data timesteps. Defaults to 1.
+        shuffle (bool, optional): Whether to shuffle year groups. Defaults to False.
+
+    Attributes:
+        predict_range (int): Total forecast duration = predict_size * predict_step.
+        history_range (int): Total history duration in timesteps.
+        years (list): Sorted unique years in dataset.
+
+    Yields:
+        Tuples of (data_per_worker, static_data, climatology_data, variables, config, worker_id).
     """
     def __init__(
         self,
@@ -86,8 +97,12 @@ class ZarrReader(IterableDataset):
             )
 
             if carry_over_data is not None and not self.shuffle:
+                # Validate temporal contiguity between carryover and new data
+                time_gap = data.time.values[0] - carry_over_data.time.values[-1]
+                expected_gap = np.timedelta64(self.hrs_each_step, 'h')
+                assert time_gap == expected_gap, f"Non-contiguous time detected: gap between carryover ({carry_over_data.time.values[-1]}) and new data ({data.time.values[0]}) is {time_gap}, expected {expected_gap}"
                 data = xr.concat([carry_over_data, data], dim="time")
-            
+
             assert len(data.time) > (self.predict_range + self.history_range), f"Data slice with size {len(data.time)} is not large enough for history timestamps {self.history} and a prediction size of {self.predict_size} with step {self.predict_step}"
 
             if not self.shuffle and (self.predict_range + self.history_range > 0):
@@ -125,18 +140,43 @@ class ZarrReader(IterableDataset):
             
             if climatology_data is not None:
                 assert (data_per_worker.latitude.values == climatology_data.latitude.values).all(), f'Mismatch found between climatology latitudes [{climatology_data.latitude.values[0]},...{climatology_data.latitude.values[-1]}] and data latitudes [{data_per_worker.latitude.values[0]},...{data_per_worker.latitude.values[-1]}]. This will cause the wrong climatology values to be used when calculating ACC'
-            
+                assert (data_per_worker.longitude.values == climatology_data.longitude.values).all(), f'Mismatch found between climatology longitudes [{climatology_data.longitude.values[0]},...{climatology_data.longitude.values[-1]}] and data longitudes [{data_per_worker.longitude.values[0]},...{data_per_worker.longitude.values[-1]}]. This will cause the wrong climatology values to be used when calculating ACC'
+
             print(f'Info: Processing {group}. Rank: {global_rank + 1}/{world_size} gets {rank_start_idx} to {rank_end_idx}. Worker {worker_id + 1}/{num_workers} in rank {global_rank + 1} gets {worker_start_idx} to {worker_end_idx}')
             yield data_per_worker, static_data, climatology_data, self.in_variables, self.static_variables, self.out_variables, self.predict_range, self.predict_step, self.history, self.history_range, self.hrs_each_step, worker_id
 
 
 class Forecast(IterableDataset):
+    """Wraps ZarrReader to generate input/output pairs with optional normalization and climatology.
+
+    Handles memory-efficient data loading via sharding, automatic climatology indexing detection
+    and correction (0-indexed vs 1-indexed dayofyear), and alignment of climatology to forecast timestamps.
+
+    Args:
+        dataset (ZarrReader): Underlying ZarrReader instance.
+        normalize_data (bool): Whether to apply transforms to data.
+        in_transforms (torch.nn.Module): Transform for input variables (e.g., NormalizeDenormalize).
+        static_transforms (torch.nn.Module): Transform for static variables.
+        output_transforms (torch.nn.Module): Transform for output variables.
+        mem_load (float, optional): Memory loading strategy. 0.0=minimal (history+forecast+1 timesteps),
+            0.5=half dataset, 1.0=entire dataset. Defaults to 0.0.
+        region_info (optional): Regional subsetting. Not yet implemented.
+
+    Yields:
+        Tuples of (input, static, output, climatology, lead_times, variable_names,
+                   timestamps, num_forecast_steps, worker_id).
+        - input: Tensor (time, variables, lat, lon) - input features
+        - static: Tensor (variables, lat, lon) - static features
+        - output: Tensor (time, variables, lat, lon) - forecast targets
+        - climatology: Tensor (time, variables, lat, lon) or None
+        - lead_times: Tensor (time,) - forecast lead times in hours
+    """
     def __init__(
-        self, dataset: ZarrReader, 
-        normalize_data: bool, 
-        in_transforms: torch.nn.Module, 
-        static_transforms: torch.nn.Module, 
-        output_transforms: torch.nn.Module, 
+        self, dataset: ZarrReader,
+        normalize_data: bool,
+        in_transforms: torch.nn.Module,
+        static_transforms: torch.nn.Module,
+        output_transforms: torch.nn.Module,
         mem_load: float = 0.0,
         region_info = None,
     ) -> None:
@@ -174,7 +214,15 @@ class Forecast(IterableDataset):
                 
                 if climatology_data is not None:
                     doys = np.array([(np.datetime64(ts, 'D') - np.datetime64(f"{ts.astype('datetime64[Y]')}-01-01", 'D')).astype(int) + 1 for ts in data_shard['time'].values])
-                    climatology_shard = climatology_data[out_variables].sel(dayofyear=np.unique(doys))
+                    # Check if climatology is 0-indexed or 1-indexed
+                    clim_doy_min = climatology_data.dayofyear.values.min()
+                    if clim_doy_min == 0:
+                        # Climatology is 0-indexed (0-365), shift to match 1-indexed doys
+                        doys_adjusted = doys - 1
+                    else:
+                        assert clim_doy_min == 1, f"Unexpected climatology dayofyear indexing. Expected min=1 or 0, got {clim_doy_min}"
+                        doys_adjusted = doys
+                    climatology_shard = climatology_data[out_variables].sel(dayofyear=np.unique(doys_adjusted))
                     climatology_shard = climatology_shard.load()
 
                 if (predict_range + history_range > 0):
@@ -196,10 +244,23 @@ class Forecast(IterableDataset):
                     if climatology_data is not None:
                         tod = np.array([ts.astype('datetime64[h]').astype(int) % 24 for ts in output_timestamps])
                         doy = np.array([(np.datetime64(ts, 'D') - np.datetime64(f"{ts.astype('datetime64[Y]')}-01-01", 'D')).astype(int) + 1 for ts in output_timestamps])
-                        tod_da = xr.DataArray(tod, dims=["pairs"])
-                        doy_da = xr.DataArray(doy, dims=["pairs"])
-                        climatology = climatology_shard[out_variables].sel(hour=tod_da, dayofyear=doy_da).to_array().transpose('pairs', 'variable', 'latitude', 'longitude')
-                        climatology = torch.tensor(climatology.values)
+                        # Adjust doy based on climatology indexing (same logic as above)
+                        if clim_doy_min == 0:
+                            doy_adjusted = doy - 1
+                        else:
+                            doy_adjusted = doy
+                        try:
+                            tod_da = xr.DataArray(tod, dims=["pairs"])
+                            doy_da = xr.DataArray(doy_adjusted, dims=["pairs"])
+                            climatology = climatology_shard[out_variables].sel(hour=tod_da, dayofyear=doy_da).to_array().transpose('pairs', 'variable', 'latitude', 'longitude')
+                            climatology = torch.tensor(climatology.values)
+                        except KeyError as e:
+                            raise ValueError(
+                                f"Failed to select climatology for hour={tod} and dayofyear={doy_adjusted}. "
+                                f"Available hours: {climatology_shard.hour.values if 'hour' in climatology_shard else 'N/A'}, "
+                                f"Available dayofyear: {climatology_shard.dayofyear.values.min()}-{climatology_shard.dayofyear.values.max()}. "
+                                f"Original error: {e}"
+                            )
                     else:
                         climatology = None
                         
@@ -209,6 +270,17 @@ class Forecast(IterableDataset):
                         yield input, static, output, climatology, lead_times, in_variables, static_variables, out_variables, input_timestamps, output_timestamps, len(lead_times), worker_id
 
 class ShuffleIterableDataset(IterableDataset):
+    """Provides buffered shuffling for IterableDatasets.
+
+    Maintains a buffer of samples and randomly yields items from the buffer,
+    refilling as items are consumed. Provides better randomization than no shuffling
+    while being memory-efficient.
+
+    Args:
+        dataset (IterableDataset): Dataset to wrap with shuffling.
+        max_buffer_size (int): Size of shuffle buffer. Larger values provide
+            better randomization but use more memory. Must be > 0.
+    """
     def __init__(self, dataset, max_buffer_size: int) -> None:
         super().__init__()
         assert max_buffer_size > 0
