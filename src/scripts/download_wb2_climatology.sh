@@ -2,22 +2,15 @@
 #
 # WeatherBench2 ERA5 Daily Climatology Download Script
 #
-# This script downloads ERA5 daily climatology from the WeatherBench2 Google Cloud Storage bucket.
-# Climatology contains long-term daily means computed over the reference period 1990-2017.
-#
-# Data characteristics:
-#   - Reference period: 1990-2017 (28 years)
-#   - Temporal resolution: Daily climatology (dayofyear dimension)
-#   - Spatial resolution: 1.5° (240x121 equiangular grid with poles)
-#   - Format: Zarr
-#   - Dimensions: (hour, dayofyear, lat, lon) or (hour, dayofyear, level, lat, lon)
+# This script downloads ERA5 climatology from the WeatherBench2 Google Cloud Storage bucket.
+# Climatology contains long-term means computed over some reference period
 #
 # Requirements:
 #   - gsutil command-line tool (part of Google Cloud SDK)
 #   - Sufficient disk space (~100s of GB)
 #
 # Usage:
-#   1. Edit the ROOT variable below to set your desired output directory
+#   1. Edit the configuration below to set your desired parameters
 #   2. Run: bash download_wb2_climatology.sh
 #
 # The script will:
@@ -31,14 +24,14 @@
 # =============================================================================
 
 # Configuration
-SURFACE_VARIABLES=(2m_temperature 10m_u_component_of_wind 10m_v_component_of_wind mean_sea_level_pressure total_precipitation_24hr)
+DATASET="era5-hourly-climatology/1990-2017_6h_240x121_equiangular_with_poles_conservative.zarr"
+SURFACE_VARIABLES=(2m_temperature 10m_u_component_of_wind 10m_v_component_of_wind mean_sea_level_pressure total_precipitation_6hr)
 ATMOSPHERIC_VARIABLES=(geopotential u_component_of_wind v_component_of_wind temperature specific_humidity)
-DIMENSIONS=(dayofyear latitude longitude level)
+DIMENSIONS=(dayofyear latitude longitude level hour)
 METADATA=(.zattrs .zgroup .zmetadata)
-DATASET="1990-2017-daily_clim_daily_mean_61_dw_240x121_equiangular_with_poles_conservative.zarr"
 
 # IMPORTANT: Update this path to your desired output directory
-ROOT="/glade/derecho/scratch/${USER}/DATA/era5_climatology"
+ROOT="/glade/derecho/scratch/kvirji/DATA/"
 
 # Validate gsutil is available
 if ! command -v gsutil &> /dev/null; then
@@ -73,7 +66,7 @@ echo "Step 1/2: Downloading metadata files..."
 for file in "${METADATA[@]}"; do
     if [ ! -f "${ROOT}/${DATASET}/${file}" ]; then
         echo "  Downloading ${file}..."
-        if ! gsutil -m cp "gs://weatherbench2/datasets/era5-daily-climatology/${DATASET}/${file}" "${ROOT}/${DATASET}/${file}"; then
+        if ! gsutil -m cp "gs://weatherbench2/datasets/${DATASET}/${file}" "${ROOT}/${DATASET}/${file}"; then
             echo "ERROR: Failed to download ${file}"
             exit 1
         fi
@@ -90,7 +83,7 @@ current=0
 for variable in "${DATA[@]}"; do
     current=$((current + 1))
     echo "  [${current}/${total_vars}] Downloading ${variable}..."
-    if ! gsutil -m cp -r -n "gs://weatherbench2/datasets/era5-daily-climatology/${DATASET}/${variable}/" "${ROOT}/${DATASET}/"; then
+    if ! gsutil -m cp -r -n "gs://weatherbench2/datasets/${DATASET}/${variable}/" "${ROOT}/${DATASET}/"; then
         echo "ERROR: Failed to download ${variable}"
         exit 1
     fi
