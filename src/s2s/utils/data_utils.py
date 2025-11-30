@@ -2,10 +2,10 @@
 # Licensed under the MIT license.
 
 import numpy as np
-import torch 
+import torch
 import calendar
-import numpy as np
 
+# Mapping from WeatherBench2 variable names to short names
 NAME_TO_VAR = {
     "2m_temperature": "t2m",
     "10m_u_component_of_wind": "u10",
@@ -23,12 +23,13 @@ NAME_TO_VAR = {
     "soil_type": "slt",
 }
 
-#Aurora and WB2 use different short_names for some surface variables
+# Aurora model uses different short names for some surface variables
 AURORA_NAME_TO_VAR = NAME_TO_VAR.copy()
 AURORA_NAME_TO_VAR["2m_temperature"] = "2t"
 AURORA_NAME_TO_VAR["10m_u_component_of_wind"] = "10u"
 AURORA_NAME_TO_VAR["10m_v_component_of_wind"] = "10v"
 
+# Variable ID codes used by the Aurora model
 AURORA_VARIABLE_CODES = {
     '2t': 1,
     't': 1,
@@ -44,6 +45,7 @@ AURORA_VARIABLE_CODES = {
     'slt': 9
 }
 
+# Variables that don't change over time
 STATIC_VARS = [
     "land_sea_mask",
     "orography",
@@ -51,6 +53,7 @@ STATIC_VARS = [
     "soil_type",
 ]
 
+# Variables at Earth's surface
 SURFACE_VARS = [
     "2m_temperature",
     "10m_u_component_of_wind",
@@ -58,6 +61,7 @@ SURFACE_VARS = [
     "mean_sea_level_pressure",
 ]
 
+# Variables at pressure levels
 ATMOSPHERIC_VARS = [
     "geopotential",
     "u_component_of_wind",
@@ -67,6 +71,7 @@ ATMOSPHERIC_VARS = [
     "specific_humidity",
 ]
 
+# Loss weights for each variable
 NAME_TO_WEIGHT = {
     "mean_sea_level_pressure": 1.6,
     "10m_u_component_of_wind": 0.77,
@@ -80,10 +85,10 @@ NAME_TO_WEIGHT = {
     "v_component_of_wind": 0.6
 }
 
-# DEFAULT_PRESSURE_LEVELS = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
+# Pressure levels (hPa) used for atmospheric variables
 DEFAULT_PRESSURE_LEVELS = [50, 250, 500, 600, 700, 850, 925]
 
-# LEVEL_WEIGHTS = [l / sum(DEFAULT_PRESSURE_LEVELS) for l in DEFAULT_PRESSURE_LEVELS]
+# Dictionary mapping variable_level strings to their weights
 WEIGHTS_DICT = {}
 for var in ATMOSPHERIC_VARS:
     for l in DEFAULT_PRESSURE_LEVELS:
@@ -121,6 +126,17 @@ def split_surface_atmospheric(variables: list):
     return surface_vars, atmospheric_vars
 
 def collate_fn(batch):
+    """Collate function for DataLoader to batch forecast samples.
+
+    Stacks tensors and handles variable-length metadata from multiple samples.
+
+    Args:
+        batch (list): List of tuples from Forecast dataset.
+
+    Returns:
+        tuple: (input, static, output, climatology, lead_times, variables, static_variables,
+                out_variables, input_timestamps, output_timestamps, remaining_predict_steps, worker_ids).
+    """
     batch = list(zip(*batch)) 
     inp = torch.stack(batch[0])
     static = torch.stack(batch[1])
@@ -150,6 +166,15 @@ def collate_fn(batch):
     )
 
 def leap_year_data_adjustment(data, hrs_per_step):
+    """Insert NaN values for Feb 29 in non-leap year data to align with leap year structure.
+
+    Args:
+        data (np.ndarray): Data array with time as first dimension.
+        hrs_per_step (int): Hours between consecutive timesteps.
+
+    Returns:
+        np.ndarray: Data with Feb 29 inserted if originally missing.
+    """
     leap_year_steps = HRS_PER_LEAP_YEAR // hrs_per_step
     if data.shape[0] < leap_year_steps:
         feb29_start = 59 * 24//hrs_per_step #feb 29th would be the 59th day in a leap year
@@ -159,6 +184,15 @@ def leap_year_data_adjustment(data, hrs_per_step):
         return data
 
 def leap_year_time_adjustment(time, hrs_per_step):
+    """Insert Feb 29 timestamps in non-leap year time arrays to align with leap year structure.
+
+    Args:
+        time (np.ndarray): Time array with MM-DDTHH:MM format strings.
+        hrs_per_step (int): Hours between consecutive timesteps.
+
+    Returns:
+        np.ndarray: Time array with Feb 29 inserted if originally missing.
+    """
     leap_year_steps = HRS_PER_LEAP_YEAR // hrs_per_step
     if time.shape[0] < leap_year_steps:
         feb29_start = 59 * 24//hrs_per_step #feb 29th would be the 59th day in a leap year
@@ -169,12 +203,17 @@ def leap_year_time_adjustment(time, hrs_per_step):
         return time
 
 def is_leap_year(year):
+    """Check if a year is a leap year."""
     return calendar.isleap(year)
 
 def encode_timestamp(timestamp):
-    """
-    Encodes a timestamp string of the form 'YYYY-MM-DDTHH:MM' into a unique number.
-    For example, '2020-01-01T00:00' -> 202001010000 (YYYYMMDDHHMM).
+    """Encode timestamp string into unique integer for efficient storage.
+
+    Args:
+        timestamp (str): Timestamp in 'YYYY-MM-DDTHH:MM' format.
+
+    Returns:
+        int: Encoded timestamp as YYYYMMDDHHMM (e.g., 202001010000).
     """
     year = int(timestamp[0:4])
     month = int(timestamp[5:7])
@@ -185,9 +224,13 @@ def encode_timestamp(timestamp):
     return encoded
 
 def decode_timestamp(encoded):
-    """
-    Decodes the unique number back into the timestamp string 'YYYY-MM-DDTHH:MM'.
-    For example, 202001010000 -> '2020-01-01T00:00'.
+    """Decode integer timestamp back into string format.
+
+    Args:
+        encoded (int): Encoded timestamp as YYYYMMDDHHMM.
+
+    Returns:
+        str: Timestamp in 'YYYY-MM-DDTHH:MM' format.
     """
     minute = encoded % 100
     encoded = encoded // 100
@@ -200,13 +243,27 @@ def decode_timestamp(encoded):
     return f"{year:04d}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}"
 
 def remove_year(timestamp):
-    """
-    Removes the year field from a timestamp to access just the doy and tod.
-    For example, '2020-01-01T00:00' -> '01-01T00:00' .
+    """Remove year from timestamp, keeping only month-day-time.
+
+    Args:
+        timestamp (str): Timestamp in 'YYYY-MM-DDTHH:MM' format.
+
+    Returns:
+        str: Timestamp without year (e.g., '01-01T00:00').
     """
     return timestamp[5:]
 
 def zero_pad(input, pad_rows=1, pad_dim=1):
+    """Pad tensor or array with zeros along specified dimension.
+
+    Args:
+        input (torch.Tensor or np.ndarray): Input tensor or array to pad.
+        pad_rows (int, optional): Number of rows to pad. Defaults to 1.
+        pad_dim (int, optional): Dimension to pad along. Defaults to 1.
+
+    Returns:
+        torch.Tensor or np.ndarray: Padded tensor or array with same type as input.
+    """
     pad_shape = list(input.shape)
     pad_shape[pad_dim] = pad_rows
     if isinstance(input, torch.Tensor):

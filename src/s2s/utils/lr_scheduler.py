@@ -28,7 +28,7 @@ class LinearWarmupCosineAnnealingLR(_LRScheduler):
             optimizer (Optimizer): Wrapped optimizer.
             warmup_steps (int): Maximum number of iterations for linear warmup
             max_steps (int): Maximum number of iterations
-            warmup_start_lr (float): LearninAZg rate to start the linear warmup. Default: 0.
+            warmup_start_lr (float): Learning rate to start the linear warmup. Default: 0.
             eta_min (float): Minimum learning rate. Default: 0.
             last_epoch (int): The index of last epoch. Default: -1.
         """
@@ -94,15 +94,17 @@ class LinearWarmupCosineAnnealingLR(_LRScheduler):
         ]
 
 class LinearWarmupConstantLR(_LRScheduler):
-    def __init__(self, optimizer, warmup_steps, last_epoch=-1):
-        """
-        Linear warm-up to a constant learning rate.
+    """Linear warmup followed by constant learning rate.
 
-        Args:
-            optimizer (Optimizer): Wrapped optimizer.
-            warmup_steps (int): Number of steps for linear warm-up.
-            last_epoch (int): The index of the last epoch. Default: -1.
-        """
+    Linearly increases learning rate from 0 to base_lr over warmup_steps,
+    then maintains constant base_lr thereafter.
+
+    Args:
+        optimizer (Optimizer): Wrapped optimizer.
+        warmup_steps (int): Number of steps for linear warmup.
+        last_epoch (int, optional): The index of last epoch. Default: -1.
+    """
+    def __init__(self, optimizer, warmup_steps, last_epoch=-1):
         self.warmup_steps = warmup_steps
         super(LinearWarmupConstantLR, self).__init__(optimizer, last_epoch)
 
@@ -118,3 +120,82 @@ class LinearWarmupConstantLR(_LRScheduler):
             return [base_lr * (self.last_epoch + 1) / self.warmup_steps for base_lr in self.base_lrs]
         else:
             return [base_lr for base_lr in self.base_lrs]
+
+
+if __name__ == '__main__':
+    """Example demonstrating both learning rate schedulers."""
+    import torch
+    import torch.nn as nn
+    import matplotlib.pyplot as plt
+
+    # Create simple model and optimizer
+    model = nn.Linear(10, 1)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+    # Test LinearWarmupCosineAnnealingLR
+    print("LinearWarmupCosineAnnealingLR:")
+    print("=" * 50)
+    scheduler1 = LinearWarmupCosineAnnealingLR(
+        optimizer,
+        warmup_steps=100,
+        max_steps=1000,
+        warmup_start_lr=0.0,
+        eta_min=1e-6
+    )
+
+    lrs1 = []
+    for step in range(1000):
+        lrs1.append(optimizer.param_groups[0]['lr'])
+        optimizer.step()
+        scheduler1.step()
+
+    print(f"  Initial LR (step 0): {lrs1[0]:.6f}")
+    print(f"  LR after warmup (step 100): {lrs1[100]:.6f}")
+    print(f"  LR at halfway (step 500): {lrs1[500]:.6f}")
+    print(f"  Final LR (step 999): {lrs1[-1]:.6f}")
+
+    # Reset optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+    # Test LinearWarmupConstantLR
+    print("\nLinearWarmupConstantLR:")
+    print("=" * 50)
+    scheduler2 = LinearWarmupConstantLR(
+        optimizer,
+        warmup_steps=100
+    )
+
+    lrs2 = []
+    for step in range(1000):
+        lrs2.append(optimizer.param_groups[0]['lr'])
+        optimizer.step()
+        scheduler2.step()
+
+    print(f"  Initial LR (step 0): {lrs2[0]:.6f}")
+    print(f"  LR after warmup (step 100): {lrs2[100]:.6f}")
+    print(f"  LR at halfway (step 500): {lrs2[500]:.6f}")
+    print(f"  Final LR (step 999): {lrs2[-1]:.6f}")
+
+    # Plot comparison
+    plt.figure(figsize=(12, 5))
+
+    plt.subplot(1, 2, 1)
+    plt.plot(lrs1, label='LinearWarmupCosineAnnealing')
+    plt.axvline(x=100, color='r', linestyle='--', alpha=0.5, label='Warmup end')
+    plt.xlabel('Step')
+    plt.ylabel('Learning Rate')
+    plt.title('LinearWarmupCosineAnnealingLR')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+
+    plt.subplot(1, 2, 2)
+    plt.plot(lrs2, label='LinearWarmupConstant', color='orange')
+    plt.axvline(x=100, color='r', linestyle='--', alpha=0.5, label='Warmup end')
+    plt.xlabel('Step')
+    plt.ylabel('Learning Rate')
+    plt.title('LinearWarmupConstantLR')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()

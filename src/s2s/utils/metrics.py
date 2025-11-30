@@ -7,6 +7,15 @@ from torchmetrics import Metric
 from s2s.utils.data_utils import SURFACE_VARS, ATMOSPHERIC_VARS, NAME_TO_WEIGHT
 
 class mse(Metric):
+    """Mean Squared Error metric with optional denormalization.
+
+    Computes MSE averaged over spatial dimensions for each variable independently.
+
+    Args:
+        vars (list): Variable names to compute MSE for.
+        transforms (callable, optional): Transform to denormalize predictions/targets. Defaults to None.
+        suffix (str, optional): Suffix for metric names in output dictionary. Defaults to None.
+    """
     def __init__(self, vars, transforms=None, suffix=None, **kwargs):
         super().__init__(**kwargs)
         self.add_state("mse_over_hw_sum", default=torch.zeros(len(vars)), dist_reduce_fx="sum")
@@ -40,6 +49,15 @@ class mse(Metric):
         return loss_dict
 
 class rmse(Metric):
+    """Root Mean Squared Error metric with optional denormalization.
+
+    Computes RMSE averaged over spatial dimensions for each variable independently.
+
+    Args:
+        vars (list): Variable names to compute RMSE for.
+        transforms (callable, optional): Transform to denormalize predictions/targets. Defaults to None.
+        suffix (str, optional): Suffix for metric names in output dictionary. Defaults to None.
+    """
     def __init__(self, vars, transforms=None, suffix=None, **kwargs):
         super().__init__(**kwargs)
         self.add_state("mse_over_hw_sum", default=torch.zeros(len(vars)), dist_reduce_fx="sum")
@@ -73,6 +91,18 @@ class rmse(Metric):
         return loss_dict
 
 class lat_weighted_mse(Metric):
+    """Latitude-weighted MSE metric accounting for grid cell area differences.
+
+    Weights errors by cos(latitude) to account for grid cell area variation.
+    Optionally applies per-variable weights for multi-variable aggregation.
+
+    Args:
+        vars (list): Variable names to compute weighted MSE for.
+        lat (np.ndarray): Latitude coordinates in degrees.
+        var_weights (list, optional): Per-variable weights. Defaults to uniform weighting.
+        transforms (callable, optional): Transform to denormalize predictions/targets. Defaults to None.
+        suffix (str, optional): Suffix for metric names in output dictionary. Defaults to None.
+    """
     def __init__(self, vars, lat, var_weights=None, transforms=None, suffix=None, **kwargs):
         super().__init__(**kwargs)
         self.add_state("w_mse_over_hw_sum", default=torch.zeros(len(vars)), dist_reduce_fx="sum")
@@ -127,6 +157,19 @@ class lat_weighted_mse(Metric):
         return loss_dict
 
 class variable_weighted_mae(Metric):
+    """Variable-weighted MAE with separate weights for surface and atmospheric variables.
+
+    Applies different weighting schemes to surface vs atmospheric variables,
+    useful for balancing multi-level forecast errors.
+
+    Args:
+        vars (list): Variable names (must be identifiable as surface or atmospheric).
+        alpha (float): Weight for surface variables.
+        beta (float): Weight for atmospheric variables.
+        gamma (float): Global scaling factor.
+        transforms (callable, optional): Transform to denormalize predictions/targets. Defaults to None.
+        suffix (str, optional): Suffix for metric names in output dictionary. Defaults to None.
+    """
     def __init__(self, vars, alpha, beta, gamma, transforms=None, suffix=None, **kwargs):
         super().__init__(**kwargs)
         self.add_state("weighted_mae_over_vhw", default=torch.tensor(0.0), dist_reduce_fx="sum")
@@ -191,6 +234,16 @@ class variable_weighted_mae(Metric):
         return loss_dict
 
 class lat_weighted_rmse(Metric):
+    """Latitude-weighted RMSE metric accounting for grid cell area differences.
+
+    Weights errors by cos(latitude) to account for grid cell area variation.
+
+    Args:
+        vars (list): Variable names to compute weighted RMSE for.
+        lat (np.ndarray): Latitude coordinates in degrees.
+        transforms (callable, optional): Transform to denormalize predictions/targets. Defaults to None.
+        suffix (str, optional): Suffix for metric names in output dictionary. Defaults to None.
+    """
     def __init__(self, vars, lat, transforms=None, suffix=None, **kwargs):
         super().__init__(**kwargs)
         self.add_state("w_mse_over_hw_sum", default=torch.zeros(len(vars)), dist_reduce_fx="sum")
@@ -239,6 +292,16 @@ class lat_weighted_rmse(Metric):
         return loss_dict
 
 class rmse_spatial_map(Metric):
+    """RMSE computed at each grid point to produce spatial error maps.
+
+    Useful for visualizing where model predictions are most/least accurate.
+
+    Args:
+        vars (list): Variable names to compute spatial RMSE for.
+        resolution (tuple): Grid resolution (height, width).
+        transforms (callable, optional): Transform to denormalize predictions/targets. Defaults to None.
+        suffix (str, optional): Suffix for metric names in output dictionary. Defaults to None.
+    """
     def __init__(self, vars, resolution, transforms=None, suffix=None, **kwargs):
         super().__init__(**kwargs)
 
@@ -281,6 +344,17 @@ class rmse_spatial_map(Metric):
 
 
 class lat_weighted_acc(Metric):
+    """Latitude-weighted Anomaly Correlation Coefficient (ACC) relative to climatology.
+
+    Measures pattern correlation between forecast anomalies and observed anomalies,
+    weighted by grid cell area. ACC is a standard metric for weather forecast skill.
+
+    Args:
+        vars (list): Variable names to compute ACC for.
+        lat (np.ndarray): Latitude coordinates in degrees.
+        transforms (callable, optional): Transform to denormalize predictions/targets. Defaults to None.
+        suffix (str, optional): Suffix for metric names in output dictionary. Defaults to None.
+    """
     def __init__(self, vars, lat, transforms=None, suffix=None, **kwargs):
         super().__init__(**kwargs)
         self.add_state("w_acc_over_hw_sum", default=torch.zeros(len(vars)), dist_reduce_fx="sum")
@@ -331,8 +405,18 @@ class lat_weighted_acc(Metric):
         
         return loss_dict
 
-    
+
 class acc_spatial_map(Metric):
+    """Anomaly Correlation Coefficient computed at each grid point to produce spatial correlation maps.
+
+    Visualizes spatial patterns of forecast skill relative to climatology.
+
+    Args:
+        vars (list): Variable names to compute spatial ACC for.
+        resolution (tuple): Grid resolution (height, width).
+        transforms (callable, optional): Transform to denormalize predictions/targets. Defaults to None.
+        suffix (str, optional): Suffix for metric names in output dictionary. Defaults to None.
+    """
     def __init__(self, vars, resolution, transforms=None, suffix=None, **kwargs):
         super().__init__(**kwargs)
 
@@ -380,6 +464,17 @@ class acc_spatial_map(Metric):
         return spatial_map_dict
 
 class aggregate_attn_weights(Metric):
+    """Aggregate attention weights across batches for analysis.
+
+    Accumulates attention weights from transformer-based models to understand
+    which features the model attends to during forecasting.
+
+    Args:
+        L (int): Number of layers.
+        C_in (int): Number of input channels.
+        C_out (int): Number of output channels.
+        suffix (str, optional): Suffix for metric names in output dictionary. Defaults to None.
+    """
     def __init__(self, L, C_in, C_out, suffix=None, **kwargs):
         super().__init__(**kwargs)
 
@@ -399,5 +494,130 @@ class aggregate_attn_weights(Metric):
 
         weight_name = f"attn_weights_{self.suffix}" if self.suffix else f"attn_weights"
         weights_dict[weight_name] = self.attn_weights_sum / self.count
-        
+
         return weights_dict
+
+
+if __name__ == '__main__':
+    """Example demonstrating forecast metrics computation."""
+    import torch
+
+    print("Forecast Metrics Examples")
+    print("=" * 70)
+
+    # Create dummy data
+    batch_size = 4
+    num_vars = 3
+    nlat, nlon = 16, 32
+    vars = ['2m_temperature', 'geopotential_500', 'u_component_of_wind_850']
+
+    # Generate random predictions, targets, and climatology
+    preds = torch.randn(batch_size, num_vars, nlat, nlon) * 10 + 273.15
+    targets = preds + torch.randn_like(preds) * 2  # Add some error
+    climatology = torch.ones_like(preds) * 273.15  # Simple constant climatology
+
+    # Latitude coordinates
+    lat = np.linspace(90, -90, nlat)
+
+    print(f"\nData shapes:")
+    print(f"  Predictions: {preds.shape}")
+    print(f"  Targets: {targets.shape}")
+    print(f"  Climatology: {climatology.shape}")
+    print(f"  Variables: {vars}")
+
+    # 1. Basic MSE
+    print("\n1. Mean Squared Error (MSE):")
+    print("-" * 70)
+    mse_metric = mse(vars=vars, suffix='test')
+    mse_metric.update(preds, targets)
+    mse_results = mse_metric.compute()
+    for key, value in mse_results.items():
+        print(f"  {key}: {value:.4f}")
+
+    # 2. RMSE
+    print("\n2. Root Mean Squared Error (RMSE):")
+    print("-" * 70)
+    rmse_metric = rmse(vars=vars, suffix='test')
+    rmse_metric.update(preds, targets)
+    rmse_results = rmse_metric.compute()
+    for key, value in rmse_results.items():
+        print(f"  {key}: {value:.4f}")
+
+    # 3. Latitude-weighted MSE
+    print("\n3. Latitude-Weighted MSE:")
+    print("-" * 70)
+    lat_mse_metric = lat_weighted_mse(vars=vars, lat=lat, suffix='test')
+    lat_mse_metric.update(preds, targets)
+    lat_mse_results = lat_mse_metric.compute()
+    for key, value in lat_mse_results.items():
+        print(f"  {key}: {value:.4f}")
+
+    # 4. Latitude-weighted RMSE
+    print("\n4. Latitude-Weighted RMSE:")
+    print("-" * 70)
+    lat_rmse_metric = lat_weighted_rmse(vars=vars, lat=lat, suffix='test')
+    lat_rmse_metric.update(preds, targets)
+    lat_rmse_results = lat_rmse_metric.compute()
+    for key, value in lat_rmse_results.items():
+        print(f"  {key}: {value:.4f}")
+
+    # 5. Latitude-weighted ACC (requires climatology)
+    print("\n5. Latitude-Weighted Anomaly Correlation Coefficient (ACC):")
+    print("-" * 70)
+    acc_metric = lat_weighted_acc(vars=vars, lat=lat, suffix='test')
+    acc_metric.update(preds, targets, climatology)
+    acc_results = acc_metric.compute()
+    for key, value in acc_results.items():
+        print(f"  {key}: {value:.4f}")
+
+    # 6. RMSE Spatial Map
+    print("\n6. RMSE Spatial Map:")
+    print("-" * 70)
+    rmse_spatial_metric = rmse_spatial_map(vars=vars, resolution=(nlat, nlon), suffix='test')
+    rmse_spatial_metric.update(preds, targets)
+    rmse_spatial_results = rmse_spatial_metric.compute()
+    for key, value in rmse_spatial_results.items():
+        if 'spatial' in key and len(value.shape) == 2:
+            print(f"  {key}: shape={value.shape}, mean={value.mean():.4f}, std={value.std():.4f}")
+
+    # 7. ACC Spatial Map
+    print("\n7. ACC Spatial Map:")
+    print("-" * 70)
+    acc_spatial_metric = acc_spatial_map(vars=vars, resolution=(nlat, nlon), suffix='test')
+    acc_spatial_metric.update(preds, targets, climatology)
+    acc_spatial_results = acc_spatial_metric.compute()
+    for key, value in acc_spatial_results.items():
+        if 'spatial' in key and len(value.shape) == 2:
+            print(f"  {key}: shape={value.shape}, mean={value.mean():.4f}, std={value.std():.4f}")
+
+    # 8. Variable-weighted MAE
+    print("\n8. Variable-Weighted MAE (for mixed surface/atmospheric variables):")
+    print("-" * 70)
+    var_mae_metric = variable_weighted_mae(
+        vars=vars,
+        alpha=1.0,  # Surface variable weight
+        beta=0.8,   # Atmospheric variable weight
+        gamma=1.0,  # Global scale
+        suffix='test'
+    )
+    var_mae_metric.update(preds, targets)
+    var_mae_results = var_mae_metric.compute()
+    for key, value in var_mae_results.items():
+        print(f"  {key}: {value:.4f}")
+
+    # 9. Multiple updates (simulating multiple batches)
+    print("\n9. Multi-batch aggregation example:")
+    print("-" * 70)
+    multi_rmse = rmse(vars=vars)
+    for i in range(5):
+        batch_preds = torch.randn(batch_size, num_vars, nlat, nlon) * 10 + 273.15
+        batch_targets = batch_preds + torch.randn_like(batch_preds) * 2
+        multi_rmse.update(batch_preds, batch_targets)
+    multi_rmse_results = multi_rmse.compute()
+    print(f"  Aggregated over 5 batches ({5*batch_size} total samples):")
+    for key, value in multi_rmse_results.items():
+        print(f"    {key}: {value:.4f}")
+
+    print("\n" + "=" * 70)
+    print("These metrics can be used in PyTorch Lightning modules for")
+    print("tracking forecast accuracy during training and validation.")

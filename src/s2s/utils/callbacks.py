@@ -2,11 +2,25 @@ import pytorch_lightning as pl
 import torch
 
 class GradientMonitor(pl.callbacks.Callback):
+    """PyTorch Lightning callback for monitoring gradient statistics during training.
+
+    Tracks gradient norms and detects numerical issues (NaN/Inf) to help diagnose
+    training instabilities. Logs gradient statistics to the trainer's logger.
+
+    Args:
+        log_every_n_steps (int, optional): Frequency of gradient logging. Defaults to 100.
+    """
     def __init__(self, log_every_n_steps=100):
         super().__init__()
         self.log_every_n_steps = log_every_n_steps
 
     def on_after_backward(self, trainer, pl_module):
+        """Compute and log gradient norms after backward pass.
+
+        Args:
+            trainer: PyTorch Lightning trainer instance.
+            pl_module: PyTorch Lightning module being trained.
+        """
         if trainer.global_step % self.log_every_n_steps == 0:
             gradient_norm = 0.0
             max_norm = 0.0

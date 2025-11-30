@@ -48,12 +48,20 @@ def random_trajectories(N: int, targets: List[int], candidates: List[int], M: in
 
 
 def build_trajectories(N: int, targets: List[int], candidates: List[int], D: int) -> Dict[int, List[List[int]]]:
-    """
-    For each target in `targets`, generate up to N unique trajectories
-    (lists of candidates) by extending *any* smaller-target trajectory
-    with up to D candidates whose sum exactly equals the difference.
-    If fewer than N are found at D, bump D until you either reach N
-    or exhaust all possibilities.
+    """Generate trajectories by extending smaller-target trajectories.
+
+    For each target, generates up to N unique trajectories by extending smaller-target
+    trajectories with sequences of up to D candidates that sum to the difference.
+    If fewer than N trajectories are found, D is incrementally increased.
+
+    Args:
+        N: Maximum number of trajectories to generate per target.
+        targets: List of target sums to generate trajectories for.
+        candidates: List of integers to build trajectories from.
+        D: Initial maximum extension length (automatically increased if needed).
+
+    Returns:
+        Dict mapping each target to list of trajectories summing to that target.
     """
     candidates = sorted(candidates)
     min_c, max_c = candidates[0], candidates[-1]
@@ -159,7 +167,20 @@ def homogeneous_trajectories(N: int, targets: List[int], candidates: List[int]) 
     return output
 
 def shortest_path_trajectories(N: int, targets: List[int], candidates: List[int]) -> Dict[int, List[List[int]]]:
-    candidates = sorted(candidates, reverse=True)  # Prioritize larger steps
+    """Generate trajectories prioritizing larger step sizes via depth-first search.
+
+    Uses greedy DFS to find trajectories that prefer larger candidates first,
+    resulting in shorter trajectories (fewer steps).
+
+    Args:
+        N: Maximum number of trajectories to generate per target.
+        targets: List of target sums to generate trajectories for.
+        candidates: List of integers to build trajectories from.
+
+    Returns:
+        Dict mapping each target to list of trajectories summing to that target.
+    """
+    candidates = sorted(candidates, reverse=True)
     results = {}
 
     def dfs(path, remaining, all_paths):
@@ -206,26 +227,60 @@ def load_trajectories_from_file(filename: str) -> Dict[int, List[List[int]]]:
     # Convert string keys back to integers
     return {int(k): v for k, v in trajectories.items()}
 
-def main():
-    targets = [6,12,18,24,30,36,42,48,54,60,66,72,78,84,90,96,102,108,114,120,126,132,138,144,150,156,162,168]
-    candidates = [6,12,18,24,30,36,42,48,54,60,66,72,78,84,90,96,102,108,114,120,126,132,138,144,150,156,162,168]
-    N = 100
-
-    print("\nTesting homogeneous_trajectories:")
-    homo_traj = homogeneous_trajectories(N, targets, candidates)
-    for target, trajectories in homo_traj.items():
-        print(f"Target {target}: {trajectories}")
-
-    print("\nTesting random_trajectories:")
-    rand_traj = random_trajectories(N, targets, candidates)
-    for target, trajectories in rand_traj.items():
-        print(f"Target {target}: {trajectories}")
-
-    print("\nTesting build_trajectories:")
-    built_traj = build_trajectories(N, targets, candidates)
-    for target, trajectories in built_traj.items():
-        print(f"Target {target}: {trajectories}")
-        print(len(trajectories))
-
 if __name__ == "__main__":
-    main()
+    """Example demonstrating trajectory generation methods for autoregressive forecasting."""
+
+    # Configuration for 6-hourly forecasts up to 7 days (168 hours)
+    targets = [6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, 84, 90, 96,
+               102, 108, 114, 120, 126, 132, 138, 144, 150, 156, 162, 168]
+    candidates = [6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, 84, 90, 96,
+                  102, 108, 114, 120, 126, 132, 138, 144, 150, 156, 162, 168]
+    N = 5  # Generate up to 5 trajectories per target
+
+    print("Trajectory Generation Examples")
+    print("=" * 70)
+    print(f"Targets: {targets[:4]}... (up to {targets[-1]} hours)")
+    print(f"Candidates: {candidates[:4]}... (step sizes in hours)")
+    print(f"Max trajectories per target: {N}\n")
+
+    # 1. Homogeneous trajectories (repeated single step)
+    print("1. Homogeneous Trajectories (repeated single step):")
+    print("-" * 70)
+    homo_traj = homogeneous_trajectories(N, targets[:4], candidates)
+    for target, trajectories in homo_traj.items():
+        if len(trajectories) > 4:
+            print(f"  Target {target}h: {trajectories[:4]}... ({len(trajectories)} total)")
+        else:
+            print(f"  Target {target}h: {trajectories}")
+
+    # 2. Random trajectories
+    print("\n2. Random Trajectories:")
+    print("-" * 70)
+    rand_traj = random_trajectories(N, targets[:4], candidates)
+    for target, trajectories in rand_traj.items():
+        if len(trajectories) > 4:
+            print(f"  Target {target}h: {trajectories[:4]}... ({len(trajectories)} total)")
+        else:
+            print(f"  Target {target}h: {trajectories}")
+
+    # 3. Build trajectories (extending smaller trajectories)
+    print("\n3. Build Trajectories (progressive extension):")
+    print("-" * 70)
+    built_traj = build_trajectories(N, targets[:4], candidates, D=2)
+    for target, trajectories in built_traj.items():
+        if len(trajectories) > 4:
+            print(f"  Target {target}h: {trajectories[:4]}... ({len(trajectories)} total)")
+        else:
+            print(f"  Target {target}h: {trajectories}")
+
+    # 4. Shortest path trajectories
+    print("\n4. Shortest Path Trajectories (greedy DFS):")
+    print("-" * 70)
+    shortest_traj = shortest_path_trajectories(N, targets[:4], candidates)
+    for target, trajectories in shortest_traj.items():
+        if len(trajectories) > 4:
+            print(f"  Target {target}h: {trajectories[:4]}... ({len(trajectories)} total)")
+        else:
+            print(f"  Target {target}h: {trajectories}")
+
+    print("\n" + "=" * 70)

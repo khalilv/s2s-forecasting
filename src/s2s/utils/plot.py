@@ -74,22 +74,22 @@ def plot_aggregated_variables(npz_files: list, labels: list, variables: list, x_
         plt.show()
 
 def plot_ensemble_members(npz_file: str, members: list, labels: list, variables: list, x_key: str, x_label: str = None, y_label: str = None, titles: list = None, output_filename: str = None, clim_filename = None):
-    """Plot multiple variables from multiple npz files with corresponding labels.
-    
-    Args:
-        npz_files (list): List of paths to npz files
-        labels (list): List of labels corresponding to each npz file
-        variables (list): List of variable names to plot
-        x_key (str): Key for x-axis values in npz files
-        x_label (str, optional): Label for x-axis. If None, uses x_key
-        y_label (str, optional): Label for y-axis. If None, uses variable names
-        titles (list, optional): List of plot titles. If None, generates default titles
-        output_filename (str, optional): Absolute filename to save the plot as PNG
-        clim_filename (str, optional): If provided include climatology errors on plots
+    """Plot multiple variables for ensemble members from a single npz file.
 
+    Args:
+        npz_file (str): Path to npz file containing ensemble member data.
+        members (list): List of member identifiers (e.g., ['member_0', 'member_1', '']).
+        labels (list): List of labels corresponding to each member.
+        variables (list): List of variable names to plot.
+        x_key (str): Key for x-axis values in npz file.
+        x_label (str, optional): Label for x-axis. If None, uses x_key.
+        y_label (str, optional): Label for y-axis. If None, uses variable names.
+        titles (list, optional): List of plot titles. If None, generates default titles.
+        output_filename (str, optional): Absolute filename to save the plot as PNG.
+        clim_filename (str, optional): If provided, include climatology errors on plots.
     """
     assert len(members) == len(labels), "Error: members list and labels must match in length"
-    assert len(variables) <= 8, "Error: maximum number of variablesand is 8"
+    assert len(variables) <= 8, "Error: maximum number of variables is 8"
     
     # Define subplot layout based on number of variables
     layout_map = {
@@ -241,15 +241,17 @@ def plot_spatial_map_with_basemap(data: np.ndarray, lon: np.ndarray, lat: np.nda
     return
 
 def plot_correlation(npz_file: str, x_label: str, y_label: str, title: str, freq: int, start: int = 0, end: int = None, output_filename: str = None):
-    """Plot attention weights for multiple variables across history timesteps.
+    """Plot correlation statistics over time with mean and standard deviation bands.
 
     Args:
-        npz_file (str): Path to .npz file containing attention weights
-        labels (list): List of labels for each variable in the plot legend
-        variables (list): List of variable names to plot attention weights for
-        title (str): Title for the plot
-        x_ticks (list): List of x-axis tick labels showing history timesteps
-        output_filename (str, optional): If provided, save plot to this file. Defaults to None.
+        npz_file (str): Path to .npz file containing correlation data.
+        x_label (str): Label for x-axis.
+        y_label (str): Label for y-axis.
+        title (str): Title for the plot.
+        freq (int): Frequency for sampling data points.
+        start (int, optional): Starting index for data. Defaults to 0.
+        end (int, optional): Ending index for data. If None, uses all data.
+        output_filename (str, optional): If provided, save plot to this file.
     """
     data = np.load(npz_file)
     means = data['correlation_means'][start:end:freq]
@@ -268,168 +270,3 @@ def plot_correlation(npz_file: str, x_label: str, y_label: str, title: str, freq
         plt.close()
     else:
         plt.show()
-
-def main():
-    
-    npz_files = [
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/aurora/0.25-pretrained/finetuned/phase1-6h-5.625_1step_patch_size_2/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/irvine/5.625/6hr_lead_time/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/6h_finetune/eval/logs/version_2/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/6h_finetune_4_steps/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/6h_finetune_8_steps/eval/logs/version_2/results.npz',
-        '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/1d_finetune/eval/logs/version_1/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/1d_finetune_2_steps/eval/logs/version_1/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/1d_finetune_4_steps/eval/logs/version_1/results.npz',
-        '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/1d_finetune_8_steps/eval/logs/version_1/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/3d_finetune/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/3d_finetune_2_steps/eval/logs/version_1/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/3d_finetune_4_steps/eval/logs/version_1/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/3d_finetune_8_steps/eval/logs/version_1/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/5d_finetune/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/5d_finetune_4_steps/eval/logs/version_1/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/5d_finetune_8_steps/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/7d_finetune/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/7d_finetune_2_steps/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/7d_finetune_4_steps/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/7d_finetune_8_steps/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/10d_finetune/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/10d_finetune_2_step/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/10d_finetune_4_step/eval/logs/version_1/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/10d_finetune_8_step/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/14d_finetune/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/14d_finetune_2_steps/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/14d_finetune_4_steps/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/temporal/7d_1_7d_step_hist_finetune/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/temporal/7d_1_7d_step_hist_finetune_2_step/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/temporal/7d_1_7d_step_hist_finetune_4_step/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/temporal/7d_1_7d_step_hist_finetune_8_step/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/temporal/7d_4_6h_step_hist_finetune/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/temporal/7d_[-1432]_hist_finetune/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/temporal/7d_[-7272,-5812,-4352,-2892,-1432]_hist_finetune/eval_rollout/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/temporal/7d_[-7272,-5812,-4352,-2892,-1432]_hist_finetune_2_steps/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/temporal/7d_[-7272,-5812,-4352,-2892,-1432]_hist_finetune_4_steps/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/temporal/14d_[-7244,-5784,-4324,-2864,-1404]_hist_finetune/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/7d_finetune_4_steps_weighted/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/7d_[-28]_hist_finetune_from_baseline/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/7d_[-28]_hist_finetune_from_baseline_same_lt/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/1d_[-12,-8,-4]_hist_finetune/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/mid_temporal_fusion/7d_[-28]_hist_finetune/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/mid_temporal_fusion/7d_[-28]_hist_finetune_2_step/eval/logs/version_1/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/6h_[-7,-6,-5,-4,-3,-2,-1]_hist_finetune/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/6h_[-7,-6,-5,-4,-3,-2,-1]_hist_finetune_2_step/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/6h_[-7,-6,-5,-4,-3,-2,-1]_hist_finetune_4_step/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/6h_[-7,-6,-5,-4,-3,-2,-1]_hist_finetune_nofreeze/eval/logs/version_0/results.npz',
-        #'/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[6h, 12h, 18h, 24h, 30h, 36h, 42h, 48h]/eval/logs/version_0/results.npz',
-        #'/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[6h, 12h, 18h, 24h, 30h, 36h, 42h, 48h]/mean_eval/logs/version_0/results.npz',
-        #'/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/6h_[-7,-6,-5,-4,-3,-2,-1]_hist_finetune/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[1d,2d,3d,4d]/eval_temporal_fusion/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[1d,2d,3d,4d]/eval_32_member_mean/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[1d,2d,3d,4d]/eval_64_member_mean/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[1d,2d,3d,4d]/eval_homogeneous/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[6h-7d]/eval_32_member_random_ensemble/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[6h-7d]/eval_32_member_shortest_path_ensemble/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[6h-7d]/eval_64_member_random_ensemble/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[6h-7d]/eval_homogeneous/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[6h-7d]/eval_32_member_random_ensemble/logs/version_1/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/perceiver/6h_[-4,-3,-2,-1]_hist_finetune/eval/logs/version_0/results.npz',
-        # '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/perceiver/6h_[-4,-3,-2,-1]_hist_finetune/eval/logs/version_7/results.npz',
-        '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/perceiver/1d_[-32,-28,-24,-20,-16,-12,-8,-4]_hist_finetune/eval/logs/version_0/results.npz',
-        '/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/perceiver/1d_full_attn_[-4d,-3d,-2d,-1d]_hist_finetune/eval/logs/version_2/results.npz'
-
-        ]
-    labels = [
-        '1 day (1 step)',
-        '1 day (8 step)',
-        '1 day (1 step) with [-8d, -7d, -6d, -5d, -4d, -3d, -2d, -1d, 0] history',
-        'Full Attn'
-
-        # '1 day',
-        # '3 day',
-        # '5 day',
-        # '7 day', 
-        # '10 day', 
-        # '14 day',
-        # 'Random 32 member ensemble',       
-        # 'Shortest path 32 member ensemble',
-        # 'Randomized lead time 32 member ensemble',
-        # 'Homogeneous ensemble',
-    ]
-    acc_variables=['w_acc_2m_temperature', 'w_acc_u_component_of_wind_500', 'w_acc_temperature_850', 'w_acc_geopotential_500', 'w_acc_10m_u_component_of_wind', 'w_acc_10m_v_component_of_wind']
-    rmse_variables=['w_rmse_2m_temperature', 'w_rmse_u_component_of_wind_500', 'w_rmse_temperature_850', 'w_rmse_geopotential_500', 'w_rmse_10m_u_component_of_wind', 'w_rmse_10m_v_component_of_wind']
-    titles=['T2M', 'U500', 'T850', 'Z500', 'U10', 'V10']
-    plot_aggregated_variables(
-        npz_files=npz_files,
-        labels=labels,
-        variables = acc_variables,
-        x_key='lead_time_hrs',
-        x_label='Lead time (hrs)',
-        y_label='ACC',
-        titles=titles,
-        output_filename='/glade/derecho/scratch/kvirji/s2s-forecasting/plots/1d_acc_temporal.png',
-    )
-    plot_aggregated_variables(
-        npz_files=npz_files,
-        labels=labels,
-        variables = rmse_variables,
-        x_key='lead_time_hrs',
-        x_label='Lead time (hrs)',
-        y_label='RMSE',
-        titles=titles,
-        output_filename='/glade/derecho/scratch/kvirji/s2s-forecasting/plots/1d_rmse_temporal.png',
-        clim_filename='/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climatology/climatology_rmse_2021_2022.npz'
-    )
-    # plot_ensemble_members(
-    #     npz_file='/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[6h-7d]/eval_32_member_random_ensemble/logs/version_1/results.npz',
-    #     members=[f'member_{i}' for i in range(32)] + [''],
-    #     labels = [f'Member {i}' for i in range(32)] + ['Ensemble Mean'],
-    #     variables=acc_variables, 
-    #     x_key='lead_time_hrs',
-    #     x_label='Lead time (hrs)',
-    #     y_label='ACC',
-    #     titles=titles,
-    #     output_filename='/glade/derecho/scratch/kvirji/s2s-forecasting/plots/ensemble_members_acc_pres.png',
-    # )
-    # plot_ensemble_members(
-    #     npz_file='/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/baseline_[6h-7d]/eval_32_member_random_ensemble/logs/version_1/results.npz',
-    #     members=[f'member_{i}' for i in range(32)] + [''],
-    #     labels = [f'Member {i}' for i in range(32)] + ['Ensemble Mean'],
-    #     variables=rmse_variables, 
-    #     x_key='lead_time_hrs',
-    #     x_label='Lead time (hrs)',
-    #     y_label='RMSE',
-    #     titles=titles,
-    #     output_filename='/glade/derecho/scratch/kvirji/s2s-forecasting/plots/ensemble_members_rmse_pres.png',
-    #     clim_filename='/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climatology/climatology_rmse_2021_2022.npz'
-    # )
-
-    out_variables = ['2m_temperature', '10m_u_component_of_wind', '10m_v_component_of_wind', 'geopotential_50', 'geopotential_250', 'geopotential_500', 'geopotential_600', 'geopotential_700', 'geopotential_850', 'geopotential_925', 'u_component_of_wind_50', 'u_component_of_wind_250', 'u_component_of_wind_500', 'u_component_of_wind_600', 'u_component_of_wind_700', 'u_component_of_wind_850', 'u_component_of_wind_925', 'v_component_of_wind_50', 'v_component_of_wind_250', 'v_component_of_wind_500', 'v_component_of_wind_600', 'v_component_of_wind_700', 'v_component_of_wind_850', 'v_component_of_wind_925', 'temperature_50', 'temperature_250', 'temperature_500', 'temperature_600', 'temperature_700', 'temperature_850', 'temperature_925', 'relative_humidity_50', 'relative_humidity_250', 'relative_humidity_500', 'relative_humidity_600', 'relative_humidity_700', 'relative_humidity_850', 'relative_humidity_925', 'specific_humidity_50', 'specific_humidity_250', 'specific_humidity_500', 'specific_humidity_600', 'specific_humidity_700', 'specific_humidity_850', 'specific_humidity_925']
-    # plot_attn_weights(
-    #     npz_file='/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/6h_[-7,-6,-5,-4,-3,-2,-1]_hist_finetune/eval/logs/version_0/results.npz',
-    #     key='attn_weights_time',
-    #     title='Temporal aggregation attention weights',
-    #     x_ticks=[t/4 for t in [-7,-6,-5,-4,-3,-2,-1, 0]],
-    #     x_label='History (days)',
-    #     output_filename='/glade/derecho/scratch/kvirji/s2s-forecasting/plots/attn_weights/late_fusion_6h_attn_weights_[-7,-6,-5,-4,-3,-2,-1]_hist_time.png',
-    # )
-    # plot_attn_weights(
-    #     npz_file='/glade/derecho/scratch/kvirji/s2s-forecasting/exps/climaX/all_vars/late_temporal_fusion/6h_[-7,-6,-5,-4,-3,-2,-1]_hist_finetune/eval/logs/version_0/results.npz',
-    #     key='attn_weights_var',
-    #     title='Variable aggregation attention weights',
-    #     x_ticks=out_variables,
-    #     x_label='Variable',
-    #     output_filename='/glade/derecho/scratch/kvirji/s2s-forecasting/plots/attn_weights/late_fusion_6h_attn_weights_[-7,-6,-5,-4,-3,-2,-1]_hist_var.png',
-    # )
-    # plot_correlation(
-    #     npz_file='/glade/derecho/scratch/kvirji/s2s-forecasting/exps/correlation.npz',
-    #     x_label='Lag (days)',
-    #     y_label='Pearson correlation coeff',
-    #     title='Correlation Analysis',
-    #     freq=1,
-    #     start=0,
-    #     end=None,
-    #     output_filename='/glade/derecho/scratch/kvirji/s2s-forecasting/plots/correlation.png',
-
-    # )
-
-if __name__ == "__main__":
-    main()
